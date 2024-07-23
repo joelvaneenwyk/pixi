@@ -1,10 +1,15 @@
 condax
 cowpy
 Distro
+frontalface
+haarcascade
+imshow
 markdownlint
 myproject
 nushell
 Nushell
+opencv
+Opencv
 pacman
 pipx
 pixi
