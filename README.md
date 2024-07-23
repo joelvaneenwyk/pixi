@@ -1,3 +1,5 @@
+<!-- markdownlint-disable MD033 -->
+
 <h1>
   <a href="https://github.com/prefix-dev/pixi/">
     <picture>
@@ -14,7 +16,6 @@
 [![Build Status][build-badge]][build]
 [![Project Chat][chat-badge]][chat-url]
 [![Pixi Badge][pixi-badge]][pixi-url]
-
 
 [license-badge]: https://img.shields.io/badge/license-BSD--3--Clause-blue?style=flat-square
 [build-badge]: https://img.shields.io/github/actions/workflow/status/prefix-dev/pixi/rust.yml?style=flat-square&branch=main
@@ -115,6 +116,7 @@ Afterwards, restart the shell or source the shell config file.
 ```bash
 echo 'eval "$(pixi completion --shell bash)"' >> ~/.bashrc
 ```
+
 #### Zsh (default on macOS)
 
 ```zsh
@@ -262,14 +264,14 @@ Options:
 
 Initialize a new project and navigate to the project directory
 
-```
+```bash
 pixi init myproject
 cd myproject
 ```
 
 Add the dependencies you want to use
 
-```
+```bash
 pixi add cowpy
 ```
 
