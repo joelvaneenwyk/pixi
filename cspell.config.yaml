@@ -1,0 +1,11 @@
+version: "0.2"
+ignorePaths: []
+dictionaryDefinitions:
+  - name: pixi
+    path: .github/config/pixi.dict
+    addWords: true
+dictionaries:
+  - pixi
+words: []
+ignoreWords: []
+import: []
