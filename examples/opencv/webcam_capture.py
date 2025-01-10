@@ -4,15 +4,17 @@ import cv2
 import requests
 
 
-def download_haarcascade(filename):
+def download_haarcascade(filename: str) -> None:
+    """Download the Haar cascade file from the OpenCV repository."""
     url = f"https://raw.githubusercontent.com/opencv/opencv/master/data/haarcascades/{filename}"
-    response = requests.get(url)
+    response = requests.get(url, timeout=10)
     response.raise_for_status()  # Check if the request was successful
     with open(filename, "wb") as f:
         f.write(response.content)
 
 
-def capture_and_grayscale():
+def capture_and_grayscale() -> None:
+    """Capture video from the webcam and convert it to grayscale."""
     filename = "haarcascade_frontalface_default.xml"
 
     if not os.path.isfile(filename):
@@ -24,25 +26,37 @@ def capture_and_grayscale():
 
     # Search for available webcams
     working_cam = None
-    for index in range(3):
+    for index in range(8):
         cap = cv2.VideoCapture(index)
         if not cap.read()[0]:
+            print(f"Webcam {index} not found")
             cap.release()
             continue
         else:
+            print(f"Webcam {index} found")
             working_cam = cap
             break
+
+    assert working_cam is not None, "No webcam found"
 
     # Check if the webcam is opened correctly
     if not working_cam.isOpened():
         raise OSError("Cannot open webcam")
 
+    captured_frame = None
     while True:
         # Read the current frame from the webcam
         ret, frame = working_cam.read()
-
         if not ret:
             break
+
+        if captured_frame is None:
+            captured_frame = frame
+            print("Frame captured")
+            print(
+                "Frame width/height: %d/%d",
+                working_cam.get(cv2.CAP_PROP_FRAME_WIDTH),
+                working_cam.get(cv2.CAP_PROP_FRAME_HEIGHT))
 
         # Convert the image to grayscale
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
