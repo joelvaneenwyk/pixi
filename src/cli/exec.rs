@@ -1,30 +1,24 @@
-use std::{
-    hash::{DefaultHasher, Hash, Hasher},
-    path::Path,
-    str::FromStr,
-};
+use std::{path::Path, str::FromStr};
 
 use clap::{Parser, ValueHint};
 use miette::{Context, IntoDiagnostic};
+use pixi_config::{self, Config, ConfigCli};
+use pixi_progress::{await_in_progress, global_multi_progress, wrap_in_progress};
+use pixi_utils::{reqwest::build_reqwest_clients, EnvironmentHash, PrefixGuard};
 use rattler::{
     install::{IndicatifReporter, Installer},
     package_cache::PackageCache,
 };
-use rattler_conda_types::{Channel, GenericVirtualPackage, MatchSpec, PackageName, Platform};
-use rattler_repodata_gateway::{ChannelConfig, Gateway};
+use rattler_conda_types::{GenericVirtualPackage, MatchSpec, PackageName, Platform};
 use rattler_solve::{resolvo::Solver, SolverImpl, SolverTask};
-use rattler_virtual_packages::VirtualPackage;
+use rattler_virtual_packages::{VirtualPackage, VirtualPackageOverrides};
 use reqwest_middleware::ClientWithMiddleware;
 
-use crate::{
-    config::{self, Config, ConfigCli},
-    prefix::Prefix,
-    progress::{await_in_progress, global_multi_progress, wrap_in_progress},
-    utils::{reqwest::build_reqwest_clients, PrefixGuard},
-};
+use super::cli_config::ChannelsConfig;
+use crate::prefix::Prefix;
 
 /// Run a command in a temporary environment.
-#[derive(Parser, Debug, Default)]
+#[derive(Parser, Debug)]
 #[clap(trailing_var_arg = true, arg_required_else_help = true)]
 pub struct Args {
     /// The executable to run.
@@ -36,9 +30,12 @@ pub struct Args {
     #[clap(long = "spec", short = 's')]
     pub specs: Vec<MatchSpec>,
 
-    /// The channel to install the packages from.
-    #[clap(long = "channel", short = 'c')]
-    pub channels: Vec<String>,
+    #[clap(flatten)]
+    channels: ChannelsConfig,
+
+    /// The platform to create the environment for.
+    #[clap(long, short, default_value_t = Platform::current())]
+    pub platform: Platform,
 
     /// If specified a new environment is always created even if one already
     /// exists.
@@ -49,41 +46,10 @@ pub struct Args {
     pub config: ConfigCli,
 }
 
-#[derive(Hash)]
-pub struct EnvironmentHash {
-    pub command: String,
-    pub specs: Vec<MatchSpec>,
-    pub channels: Vec<String>,
-}
-
-impl<'a> From<&'a Args> for EnvironmentHash {
-    fn from(value: &'a Args) -> Self {
-        Self {
-            command: value
-                .command
-                .first()
-                .cloned()
-                .expect("missing required command"),
-            specs: value.specs.clone(),
-            channels: value.channels.clone(),
-        }
-    }
-}
-
-impl EnvironmentHash {
-    /// Returns the name of the environment.
-    pub fn name(&self) -> String {
-        let mut hasher = DefaultHasher::new();
-        self.hash(&mut hasher);
-        let hash = hasher.finish();
-        format!("{}-{:x}", &self.command, hash)
-    }
-}
-
-/// CLI entry point for `pixi runx`
+/// CLI entry point for `pixi exec`
 pub async fn execute(args: Args) -> miette::Result<()> {
     let config = Config::with_cli_config(&args.config);
-    let cache_dir = config::get_cache_dir().context("failed to determine cache directory")?;
+    let cache_dir = pixi_config::get_cache_dir().context("failed to determine cache directory")?;
 
     let mut command_args = args.command.iter();
     let command = command_args.next().ok_or_else(|| miette::miette!(help ="i.e when specifying specs explicitly use a command at the end: `pixi exec -s python==3.12 python`", "missing required command to execute",))?;
@@ -117,8 +83,22 @@ pub async fn create_exec_prefix(
     config: &Config,
     client: &ClientWithMiddleware,
 ) -> miette::Result<Prefix> {
-    let environment_name = EnvironmentHash::from(args).name();
-    let prefix = Prefix::new(cache_dir.join("cached-envs-v0").join(environment_name));
+    let command = args.command.first().expect("missing required command");
+    let specs = args.specs.clone();
+    let channels = args
+        .channels
+        .resolve_from_config(config)?
+        .iter()
+        .map(|c| c.base_url.to_string())
+        .collect();
+
+    let environment_hash = EnvironmentHash::new(command.clone(), specs, channels, args.platform);
+
+    let prefix = Prefix::new(
+        cache_dir
+            .join(pixi_consts::consts::CACHED_ENVS_DIR)
+            .join(environment_hash.name()),
+    );
 
     let mut guard = PrefixGuard::new(prefix.root())
         .into_diagnostic()
@@ -146,11 +126,7 @@ pub async fn create_exec_prefix(
         .context("failed to write lock status to prefix guard")?;
 
     // Construct a gateway to get repodata.
-    let gateway = Gateway::builder()
-        .with_cache_dir(cache_dir.join("repodata"))
-        .with_client(client.clone())
-        .with_channel_config(ChannelConfig::from(config))
-        .finish();
+    let gateway = config.gateway(client.clone());
 
     // Determine the specs to use for the environment
     let specs = if args.specs.is_empty() {
@@ -167,36 +143,22 @@ pub async fn create_exec_prefix(
         args.specs.clone()
     };
 
-    // Parse the channels
-    let channels = if args.channels.is_empty() {
-        config.default_channels()
-    } else {
-        args.channels.clone()
-    };
-    let channels = channels
-        .iter()
-        .map(|channel| Channel::from_str(channel, config.channel_config()))
-        .collect::<Result<Vec<_>, _>>()
-        .into_diagnostic()?;
+    let channels = args.channels.resolve_from_config(config)?;
 
     // Get the repodata for the specs
     let repodata = await_in_progress("fetching repodata for environment", |_| async {
         gateway
-            .query(
-                channels,
-                [Platform::current(), Platform::NoArch],
-                specs.clone(),
-            )
+            .query(channels, [args.platform, Platform::NoArch], specs.clone())
             .recursive(true)
             .execute()
             .await
+            .into_diagnostic()
     })
     .await
-    .into_diagnostic()
     .context("failed to get repodata")?;
 
     // Determine virtual packages of the current platform
-    let virtual_packages = VirtualPackage::current()
+    let virtual_packages = VirtualPackage::detect(&VirtualPackageOverrides::from_env())
         .into_diagnostic()
         .context("failed to determine virtual packages")?
         .iter()
@@ -224,13 +186,17 @@ pub async fn create_exec_prefix(
 
     // Install the environment
     Installer::new()
+        .with_target_platform(args.platform)
+        .with_download_client(client.clone())
         .with_reporter(
             IndicatifReporter::builder()
                 .with_multi_progress(global_multi_progress())
                 .clear_when_done(true)
                 .finish(),
         )
-        .with_package_cache(PackageCache::new(cache_dir.join("pkgs")))
+        .with_package_cache(PackageCache::new(
+            cache_dir.join(pixi_consts::consts::CONDA_PACKAGE_CACHE_DIR),
+        ))
         .install(prefix.root(), solved_records)
         .await
         .into_diagnostic()

@@ -18,13 +18,22 @@ In this tutorial, we will use the `pyproject.toml` format because it is the most
 
 ## Let's get started
 
-Let's start out by making a directory and creating a new `pyproject.toml` file.
+Let's start out by creating a new project that uses a `pyproject.toml` file.
 
 ```shell
-pixi init pixi-py --pyproject
+pixi init pixi-py --format pyproject
 ```
 
-This gives you the following pyproject.toml:
+This creates a project with the following structure:
+
+```shell
+├── src
+│   └── pixi_py
+│       └── __init__.py
+└── pyproject.toml
+```
+
+The `pyproject.toml` for the project looks like this:
 
 ```toml
 [project]
@@ -36,8 +45,8 @@ requires-python = ">= 3.11"
 dependencies = []
 
 [build-system]
-requires = ["setuptools"]
-build-backend = "setuptools.build_meta"
+build-backend = "hatchling.build"
+requires = ["hatchling"]
 
 [tool.pixi.project]
 channels = ["conda-forge"]
@@ -49,36 +58,12 @@ pixi-py = { path = ".", editable = true }
 [tool.pixi.tasks]
 ```
 
-Let's add the Python project to the tree:
+This project uses a src-layout, but pixi supports both [flat- and src-layouts](https://packaging.python.org/en/latest/discussions/src-layout-vs-flat-layout/#src-layout-vs-flat-layout).
 
-=== "Linux & macOS"
-    ```shell
-    cd pixi-py # move into the project directory
-    mkdir pixi_py
-    touch pixi_py/__init__.py
-    ```
-
-=== "Windows"
-    ```shell
-    cd pixi-py
-    mkdir pixi_py
-    type nul > pixi_py\__init__.py
-    ```
-
-We now have the following directory structure:
-
-```shell
-.
-├── pixi_py
-│   ├── __init__.py
-└── pyproject.toml
-```
-
-We've used a flat-layout here but pixi supports both [flat- and src-layouts](https://packaging.python.org/en/latest/discussions/src-layout-vs-flat-layout/#src-layout-vs-flat-layout).
 
 ### What's in the `pyproject.toml`?
 
-Okay, so let's have a look at what's sections have been added and how we can modify the `pyproject.toml`.
+Okay, so let's have a look at what sections have been added and how we can modify the `pyproject.toml`.
 
 These first entries were added to the `pyproject.toml` file:
 
@@ -142,7 +127,7 @@ Which results in the following fields added to the `pyproject.toml`:
 test = ["pytest"]
 ```
 
-After we have added the optional dependencies to the `pyproject.toml`, pixi automatically creates a [`feature`](../reference/project_configuration.md/#the-feature-and-environments-tables), which can contain a collection of `dependencies`, `tasks`, `channels`, and more.
+After we have added the optional dependencies to the `pyproject.toml`, pixi automatically creates a [`feature`](../reference/pixi_manifest.md/#the-feature-and-environments-tables), which can contain a collection of `dependencies`, `tasks`, `channels`, and more.
 
 Sometimes there are packages that aren't available on conda channels but are published on PyPI.
 We can add these as well, which pixi will solve together with the default dependencies.
@@ -188,7 +173,7 @@ Now let's `install` the project with `pixi install`:
 
 ```shell
 $ pixi install
-✔ Project in /path/to/pixi-py is ready to use!
+✔ The default environment has been installed.
 ```
 
 We now have a new directory called `.pixi` in the project root.
@@ -230,12 +215,24 @@ xz               5.2.6         h57fd34a_0          230.2 KiB  conda  xz-5.2.6-h5
     This is used to determine the Python version to install in the environment.
     This way, pixi automatically manages/bootstraps the Python interpreter for you, so no more `brew`, `apt` or other system install steps.
 
+!!! Free-threaded interpreters
+    If you want to use a free-threaded Python interpreter, you can add `python-freethreading = "*"` to the dependencies in your `pixi` configuration.
+    This ensures that a free-threaded version of Python is installed in the environment.
+    You can read more about free-threaded Python [here](https://docs.python.org/3/howto/free-threading-python.html).
+
 Here, you can see the different conda and Pypi packages listed.
 As you can see, the `pixi-py` package that we are working on is installed in editable mode.
 Every environment in pixi is isolated but reuses files that are hard-linked from a central cache directory.
 This means that you can have multiple environments with the same packages but only have the individual files stored once on disk.
 
 We can create the `default` and `test` environments based on our own `test` feature from the `optional-dependency`:
+
+```shell
+pixi project environment add default --solve-group default
+pixi project environment add test --feature test --solve-group default
+```
+
+Which results in:
 
 ```toml
 # Environments
@@ -257,7 +254,7 @@ You can execute commands in this environment with e.g. `pixi run -e test python`
 ## Getting code to run
 
 Let's add some code to the `pixi-py` package.
-We will add a new function to the `pixi_py/__init__.py` file:
+We will add a new function to the `src/pixi_py/__init__.py` file:
 
 ```python
 from rich import print
@@ -296,8 +293,9 @@ Giving us the following project structure:
 ```shell
 .
 ├── pixi.lock
-├── pixi_py
-│   ├── __init__.py
+├── src
+│   └── pixi_py
+│       └── __init__.py
 ├── pyproject.toml
 └── tests/test_me.py
 ```
@@ -342,15 +340,15 @@ Neat! It seems to be working!
 
 ### Test vs Default environment
 
-The interesting thing is if we compare the output of the two environments.
+Let's compare the output of the test and default environments...
 
 ```shell
 pixi list -e test
-# v.s. default environment
+# vs. default environment
 pixi list
 ```
 
-Is that the test environment has:
+We see that the test environment has:
 
 ```shell
 package          version       build               size       kind   source
@@ -359,7 +357,7 @@ pytest           8.1.1                             1.1 mib    pypi   pytest-8.1.
 ...
 ```
 
-But the default environment is missing this package.
+However, the default environment is missing this package.
 This way, you can finetune your environments to only have the packages that are needed for that environment.
 E.g. you could also have a `dev` environment that has `pytest` and `ruff` installed, but you could omit these from the `prod` environment.
 There is a [docker](https://github.com/prefix-dev/pixi/tree/main/examples/docker) example that shows how to set up a minimal `prod` environment and copy from there.

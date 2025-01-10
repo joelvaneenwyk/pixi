@@ -1,30 +1,20 @@
-use std::{
-    env,
-    io::{Seek, Write},
-};
+use std::io::{Seek, Write};
 
 use flate2::read::GzDecoder;
 use tar::Archive;
 
-use crate::consts;
 use miette::{Context, IntoDiagnostic};
+use pixi_consts::consts;
 use reqwest::Client;
 use serde::Deserialize;
+use tempfile::{NamedTempFile, TempDir};
 
 /// Update pixi to the latest version or a specific version.
-///
-/// If the pixi binary is not found in the default location
-/// (e.g. `~/.pixi/bin/pixi`), pixi won't updated to prevent breaking the current installation (Homebrew, etc).
-/// The behaviour can be overridden with the `--force` flag.
 #[derive(Debug, clap::Parser)]
 pub struct Args {
     /// The desired version (to downgrade or upgrade to). Update to the latest version if not specified.
     #[clap(long)]
     version: Option<String>,
-
-    /// Force the update even if the pixi binary is not found in the default location.
-    #[clap(long)]
-    force: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -50,8 +40,14 @@ fn default_archive_name() -> Option<String> {
         } else {
             Some("pixi-aarch64-apple-darwin.tar.gz".to_string())
         }
-    } else if cfg!(target_os = "windows") && cfg!(target_arch = "x86_64") {
-        Some("pixi-x86_64-pc-windows-msvc.zip".to_string())
+    } else if cfg!(target_os = "windows") {
+        if cfg!(target_arch = "x86_64") {
+            Some("pixi-x86_64-pc-windows-msvc.zip".to_string())
+        } else if cfg!(target_arch = "aarch64") {
+            Some("pixi-aarch64-pc-windows-msvc.zip".to_string())
+        } else {
+            None
+        }
     } else if cfg!(target_os = "linux") {
         if cfg!(target_arch = "x86_64") {
             Some("pixi-x86_64-unknown-linux-musl.tar.gz".to_string())
@@ -66,25 +62,6 @@ fn default_archive_name() -> Option<String> {
 }
 
 pub async fn execute(args: Args) -> miette::Result<()> {
-    // If args.force is false and pixi is not installed in the default location, stop here.
-    match (args.force, is_pixi_binary_default_location()) {
-        (false, false) => {
-            miette::bail!(
-                "pixi is not installed in the default location:
-
-- Default pixi location: {}
-- Pixi location detected: {}
-
-It can happen when pixi has been installed via a dedicated package manager (such as Homebrew on macOS).
-You can always use `pixi self-update --force` to force the update.",
-                default_pixi_binary_path().to_str().expect("Could not convert the default pixi binary path to a string"),
-                env::current_exe().expect("Failed to retrieve the current pixi binary path").to_str().expect("Could not convert the current pixi binary path to a string")
-            );
-        }
-        (false, true) => {}
-        (true, _) => {}
-    }
-
     // Retrieve the target version information from github.
     let target_version_json = match retrieve_target_version(&args.version).await {
         Ok(target_version_json) => target_version_json,
@@ -163,8 +140,7 @@ You can always use `pixi self-update --force` to force the update.",
 
     // Uncompress the archive
     if archive_name.ends_with(".tar.gz") {
-        let mut archive = Archive::new(GzDecoder::new(archived_tempfile.as_file()));
-        archive.unpack(binary_tempdir).into_diagnostic()?;
+        unpack_tar_gz(&archived_tempfile, binary_tempdir)?;
     } else if archive_name.ends_with(".zip") {
         let mut archive = zip::ZipArchive::new(archived_tempfile.as_file()).into_diagnostic()?;
         archive.extract(binary_tempdir).into_diagnostic()?;
@@ -190,6 +166,34 @@ You can always use `pixi self-update --force` to force the update.",
         target_version
     );
 
+    Ok(())
+}
+
+/// Unpack files from a tar.gz archive to a target directory.
+fn unpack_tar_gz(
+    archived_tempfile: &NamedTempFile,
+    binary_tempdir: &TempDir,
+) -> miette::Result<()> {
+    let mut archive = Archive::new(GzDecoder::new(archived_tempfile.as_file()));
+
+    for entry in archive.entries().into_diagnostic()? {
+        let mut entry = entry.into_diagnostic()?;
+        let path = entry.path().into_diagnostic()?;
+
+        // Skip directories; we only care about files.
+        if entry.header().entry_type().is_file() {
+            // Create a flat path by stripping any directory components.
+            let stripped_path = path
+                .file_name()
+                .ok_or_else(|| miette::miette!("Failed to extract file name from {:?}", path))?;
+
+            // Construct the final path in the target directory.
+            let final_path = binary_tempdir.path().join(stripped_path);
+
+            // Unpack the file to the destination.
+            entry.unpack(final_path).into_diagnostic()?;
+        }
+    }
     Ok(())
 }
 
@@ -242,25 +246,64 @@ fn pixi_binary_name() -> String {
     format!("pixi{}", std::env::consts::EXE_SUFFIX)
 }
 
-fn default_pixi_binary_path() -> std::path::PathBuf {
-    dirs::home_dir()
-        .expect("Could not find the home directory")
-        .join(".pixi")
-        .join("bin")
-        .join(pixi_binary_name())
+pub async fn execute_stub(_: Args) -> miette::Result<()> {
+    let message = option_env!("PIXI_SELF_UPDATE_DISABLED_MESSAGE");
+    miette::bail!(
+        message.unwrap_or("This version of pixi was built without self-update support. Please use your package manager to update pixi.")
+    )
 }
 
-// check current binary is in the default pixi location
-fn is_pixi_binary_default_location() -> bool {
-    let default_binary_path = default_pixi_binary_path();
+#[cfg(test)]
+mod tests {
+    use std::path::PathBuf;
 
-    std::env::current_exe()
-        .expect("Failed to retrieve the current pixi binary path")
-        .to_str()
-        .expect("Could not convert the current pixi binary path to a string")
-        .starts_with(
-            default_binary_path
-                .to_str()
-                .expect("Could not convert the default pixi binary path to a string"),
-        )
+    #[test]
+    pub fn test_unarchive_flat_structure() {
+        // This archive contains a single file named "a_file"
+        // So we expect the file to be extracted to the target directory
+
+        let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let archive_path = manifest_dir
+            .join("tests")
+            .join("data")
+            .join("archives")
+            .join("pixi_flat_archive.tar.gz");
+
+        let named_tempfile = tempfile::NamedTempFile::new().unwrap();
+        let binary_tempdir = tempfile::tempdir().unwrap();
+
+        fs_err::copy(archive_path, named_tempfile.path()).unwrap();
+
+        super::unpack_tar_gz(&named_tempfile, &binary_tempdir).unwrap();
+
+        let binary_path = binary_tempdir.path().join("a_file");
+        assert!(binary_path.exists());
+    }
+
+    #[test]
+    pub fn test_unarchive_nested_structure() {
+        // This archive contains following nested structure
+        // pixi_nested_archive.tar.gz
+        // ├── some_pixi (directory)
+        // │   └── some_pixi (file)
+        // So we want to test that we can extract only the file to the target directory
+        // without parent directory
+        let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let archive_path = manifest_dir
+            .join("tests")
+            .join("data")
+            .join("archives")
+            .join("pixi_nested_archive.tar.gz");
+
+        let named_tempfile = tempfile::NamedTempFile::new().unwrap();
+        let binary_tempdir = tempfile::tempdir().unwrap();
+
+        fs_err::copy(archive_path, named_tempfile.path()).unwrap();
+
+        super::unpack_tar_gz(&named_tempfile, &binary_tempdir).unwrap();
+
+        let binary_path = binary_tempdir.path().join("some_pixi");
+        assert!(binary_path.exists());
+        assert!(binary_path.is_file());
+    }
 }

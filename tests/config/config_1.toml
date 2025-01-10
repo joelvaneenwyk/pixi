@@ -1,2 +1,0 @@
-default_channels = ["conda-forge", "bioconda", "defaults"]
-tls_no_verify = true

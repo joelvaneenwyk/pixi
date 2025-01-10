@@ -24,38 +24,50 @@ CARGO_TOML_DATA = tomllib.loads(CARGO_TOML.read_text(encoding="utf-8"))
 VERSION = CARGO_TOML_DATA["package"]["version"]
 SCHEMA_URI = f"https://pixi.sh/v{VERSION}/schema/manifest/schema.json"
 
-
 NonEmptyStr = Annotated[str, StringConstraints(min_length=1)]
+Md5Sum = Annotated[str, StringConstraints(pattern=r"^[a-fA-F0-9]{32}$")]
+Sha256Sum = Annotated[str, StringConstraints(pattern=r"^[a-fA-F0-9]{64}$")]
 PathNoBackslash = Annotated[str, StringConstraints(pattern=r"^[^\\]+$")]
 Glob = NonEmptyStr
 UnsignedInt = Annotated[int, Field(strict=True, ge=0)]
 GitUrl = Annotated[
     str, StringConstraints(pattern=r"((git|ssh|http(s)?)|(git@[\w\.]+))(:(\/\/)?)([\w\.@:\/\\-~]+)")
 ]
-Platform = (
-    Literal["linux-32"]
-    | Literal["linux-64"]
-    | Literal["linux-aarch64"]
-    | Literal["linux-armv6l"]
-    | Literal["linux-armv7l"]
-    | Literal["linux-ppc64le"]
-    | Literal["linux-ppc64"]
-    | Literal["linux-s390x"]
-    | Literal["linux-riscv32"]
-    | Literal["linux-riscv64"]
-    | Literal["osx-64"]
-    | Literal["osx-arm64"]
-    | Literal["win-32"]
-    | Literal["win-64"]
-    | Literal["win-arm64"]
-    | Literal["emscripten-wasm32"]
-    | Literal["wasi-wasm32"]
-)
+
+
+def hyphenize(field: str):
+    return field.replace("_", "-")
+
+
+class Platform(str, Enum):
+    """A supported operating system and processor architecture pair."""
+
+    emscripten_wasm32 = "emscripten-wasm32"
+    linux_32 = "linux-32"
+    linux_64 = "linux-64"
+    linux_aarch64 = "linux-aarch64"
+    linux_armv6l = "linux-armv6l"
+    linux_armv7l = "linux-armv7l"
+    linux_ppc64 = "linux-ppc64"
+    linux_ppc64le = "linux-ppc64le"
+    linux_riscv32 = "linux-riscv32"
+    linux_riscv64 = "linux-riscv64"
+    linux_s390x = "linux-s390x"
+    noarch = "noarch"
+    osx_64 = "osx-64"
+    osx_arm64 = "osx-arm64"
+    unknown = "unknown"
+    wasi_wasm32 = "wasi-wasm32"
+    win_32 = "win-32"
+    win_64 = "win-64"
+    win_arm64 = "win-arm64"
+    zos_z = "zos-z"
 
 
 class StrictBaseModel(BaseModel):
     class Config:
         extra = "forbid"
+        alias_generator = hyphenize
 
 
 ###################
@@ -81,11 +93,22 @@ class ChannelPriority(str, Enum):
     strict = "strict"
 
 
-class Project(StrictBaseModel):
+PixiBuildFeature = Annotated[
+    Literal["pixi-build"], Field(description="Enables building of source records")
+]
+KnownPreviewFeature = PixiBuildFeature
+
+
+# class KnownPreviewFeature(Enum):
+#     """The preview features of the project."""
+#     PixiBuild: Annotated[str, Field(description="Enables building of source records")] = "pixi-build"
+
+
+class Workspace(StrictBaseModel):
     """The project's metadata information."""
 
-    name: NonEmptyStr = Field(
-        description="The name of the project; we advise use of the name of the repository"
+    name: NonEmptyStr | None = Field(
+        None, description="The name of the project; we advise use of the name of the repository"
     )
     version: NonEmptyStr | None = Field(
         None,
@@ -102,7 +125,6 @@ class Project(StrictBaseModel):
     )
     channel_priority: ChannelPriority | None = Field(
         None,
-        alias="channel-priority",
         examples=["strict", "disabled"],
         description="The type of channel priority that is used in the solve."
         "- 'strict': only take the package from the channel it exist in first."
@@ -114,7 +136,7 @@ class Project(StrictBaseModel):
         description="The license of the project; we advise using an [SPDX](https://spdx.org/licenses/) identifier.",
     )
     license_file: PathNoBackslash | None = Field(
-        None, alias="license-file", description="The path to the license file of the project"
+        None, description="The path to the license file of the project"
     )
     readme: PathNoBackslash | None = Field(
         None, description="The path to the readme file of the project"
@@ -127,10 +149,16 @@ class Project(StrictBaseModel):
         None, description="The URL of the documentation of the project"
     )
     conda_pypi_map: dict[ChannelName, AnyHttpUrl | NonEmptyStr] | None = Field(
-        None, alias="conda-pypi-map", description="The `conda` to PyPI mapping configuration"
+        None, description="The `conda` to PyPI mapping configuration"
     )
     pypi_options: PyPIOptions | None = Field(
-        None, alias="pypi-options", description="Options related to PyPI indexes for this project"
+        None, description="Options related to PyPI indexes for this project"
+    )
+    preview: list[KnownPreviewFeature | str] | bool | None = Field(
+        None, description="Defines the enabling of preview features of the project"
+    )
+    build_variants: dict[NonEmptyStr, list[str]] | None = Field(
+        None, description="The build variants of the project"
     )
 
 
@@ -147,21 +175,35 @@ class MatchspecTable(StrictBaseModel):
         description="The version of the package in [MatchSpec](https://github.com/conda/conda/blob/078e7ee79381060217e1ec7f9b0e9cf80ecc8f3f/conda/models/match_spec.py) format",
     )
     build: NonEmptyStr | None = Field(None, description="The build string of the package")
+    build_number: NonEmptyStr | None = Field(
+        None,
+        description="The build number of the package, can be a spec like `>=1` or `<=10` or `1`",
+    )
+    file_name: NonEmptyStr | None = Field(None, description="The file name of the package")
     channel: NonEmptyStr | None = Field(
         None,
         description="The channel the packages needs to be fetched from",
         examples=["conda-forge", "pytorch", "https://repo.prefix.dev/conda-forge"],
     )
+    subdir: NonEmptyStr | None = Field(
+        None, description="The subdir of the package, also known as platform"
+    )
+
+    path: NonEmptyStr | None = Field(None, description="The path to the package")
+
+    url: NonEmptyStr | None = Field(None, description="The URL to the package")
+    md5: Md5Sum | None = Field(None, description="The md5 hash of the package")
+    sha256: Sha256Sum | None = Field(None, description="The sha256 hash of the package")
+
+    git: NonEmptyStr | None = Field(None, description="The git URL to the repo")
+    rev: NonEmptyStr | None = Field(None, description="A git SHA revision to use")
+    tag: NonEmptyStr | None = Field(None, description="A git tag to use")
+    branch: NonEmptyStr | None = Field(None, description="A git branch to use")
+    subdirectory: NonEmptyStr | None = Field(None, description="A subdirectory to use in the repo")
 
 
 MatchSpec = NonEmptyStr | MatchspecTable
 CondaPackageName = NonEmptyStr
-
-
-# { version = "sdfds" extras = ["sdf"] }
-# { git = "sfds", rev = "fssd" }
-# { path = "asfdsf" }
-# { url = "asdfs" }
 
 
 class _PyPIRequirement(StrictBaseModel):
@@ -176,10 +218,13 @@ class _PyPiGitRequirement(_PyPIRequirement):
         None,
         description="The `git` URL to the repo e.g https://github.com/prefix-dev/pixi",
     )
+    subdirectory: NonEmptyStr | None = Field(
+        None, description="The subdirectory in the repo, a path from the root of the repo."
+    )
 
 
 class PyPIGitRevRequirement(_PyPiGitRequirement):
-    rev: Optional[NonEmptyStr] = Field(None, description="A `git` SHA revision to sue")
+    rev: Optional[NonEmptyStr] = Field(None, description="A `git` SHA revision to use")
 
 
 class PyPIGitBranchRequirement(_PyPiGitRequirement):
@@ -198,6 +243,9 @@ class PyPIPathRequirement(_PyPIRequirement):
     editable: Optional[bool] = Field(
         None, description="If `true` the package will be installed as editable"
     )
+    subdirectory: NonEmptyStr | None = Field(
+        None, description="The subdirectory in the repo, a path from the root of the repo."
+    )
 
 
 class PyPIUrlRequirement(_PyPIRequirement):
@@ -211,6 +259,10 @@ class PyPIVersion(_PyPIRequirement):
     version: NonEmptyStr = Field(
         None,
         description="The version of the package in [PEP 440](https://www.python.org/dev/peps/pep-0440/) format",
+    )
+    index: NonEmptyStr | None = Field(
+        None,
+        description="The index to fetch the package from",
     )
 
 
@@ -231,14 +283,16 @@ DependenciesField = Field(
 )
 HostDependenciesField = Field(
     None,
-    alias="host-dependencies",
-    description="The host `conda` dependencies, used in the build process",
+    description="The host `conda` dependencies, used in the build process. See https://pixi.sh/latest/build/dependency_types/ for more information.",
     examples=[{"python": ">=3.8"}],
 )
 BuildDependenciesField = Field(
     None,
-    alias="build-dependencies",
-    description="The build `conda` dependencies, used in the build process",
+    description="The build `conda` dependencies, used in the build process. See https://pixi.sh/latest/build/dependency_types/ for more information.",
+)
+RunDependenciesField = Field(
+    None,
+    description="The `conda` dependencies required at runtime. See https://pixi.sh/latest/build/dependency_types/ for more information.",
 )
 Dependencies = dict[CondaPackageName, MatchSpec] | None
 
@@ -264,7 +318,6 @@ class TaskInlineTable(StrictBaseModel):
     )
     depends_on: list[TaskName] | TaskName | None = Field(
         None,
-        alias="depends-on",
         description="The tasks that this task depends on. Environment variables will **not** be expanded.",
     )
     inputs: list[Glob] | None = Field(
@@ -287,7 +340,6 @@ class TaskInlineTable(StrictBaseModel):
     )
     clean_env: bool | None = Field(
         None,
-        alias="clean-env",
         description="Whether to run in a clean environment, removing all environment variables except those defined in `env` and by pixi itself.",
     )
 
@@ -337,12 +389,10 @@ class Environment(StrictBaseModel):
     )
     solve_group: SolveGroupName | None = Field(
         None,
-        alias="solve-group",
         description="The group name for environments that should be solved together",
     )
     no_default_feature: Optional[bool] = Field(
         False,
-        alias="no-default-feature",
         description="Whether to add the default feature to this environment",
     )
 
@@ -378,7 +428,7 @@ class Target(StrictBaseModel):
     host_dependencies: Dependencies = HostDependenciesField
     build_dependencies: Dependencies = BuildDependenciesField
     pypi_dependencies: dict[PyPIPackageName, PyPIRequirement] | None = Field(
-        None, alias="pypi-dependencies", description="The PyPI dependencies for this target"
+        None, description="The PyPI dependencies for this target"
     )
     tasks: dict[TaskName, TaskInlineTable | NonEmptyStr] | None = Field(
         None, description="The tasks of the target"
@@ -400,13 +450,12 @@ class Feature(StrictBaseModel):
     )
     channel_priority: ChannelPriority | None = Field(
         None,
-        alias="channel-priority",
         examples=["strict", "disabled"],
         description="The type of channel priority that is used in the solve."
         "- 'strict': only take the package from the channel it exist in first."
         "- 'disabled': group all dependencies together as if there is no channel difference.",
     )
-    platforms: list[NonEmptyStr] | None = Field(
+    platforms: list[Platform] | None = Field(
         None,
         description="The platforms that the feature supports: a union of all features combined in one environment is used for the environment.",
     )
@@ -414,7 +463,7 @@ class Feature(StrictBaseModel):
     host_dependencies: Dependencies = HostDependenciesField
     build_dependencies: Dependencies = BuildDependenciesField
     pypi_dependencies: dict[PyPIPackageName, PyPIRequirement] | None = Field(
-        None, alias="pypi-dependencies", description="The PyPI dependencies of this feature"
+        None, description="The PyPI dependencies of this feature"
     )
     tasks: dict[TaskName, TaskInlineTable | NonEmptyStr] | None = Field(
         None, description="The tasks provided by this feature"
@@ -423,7 +472,7 @@ class Feature(StrictBaseModel):
         None, description="The scripts used on the activation of environments using this feature"
     )
     system_requirements: SystemRequirements | None = Field(
-        None, alias="system-requirements", description="The system requirements of this feature"
+        None, description="The system requirements of this feature"
     )
     target: dict[TargetName, Target] | None = Field(
         None,
@@ -431,7 +480,7 @@ class Feature(StrictBaseModel):
         examples=[{"linux": {"dependencies": {"python": "3.8"}}}],
     )
     pypi_options: PyPIOptions | None = Field(
-        None, alias="pypi-options", description="Options related to PyPI indexes for this feature"
+        None, description="Options related to PyPI indexes for this feature"
     )
 
 
@@ -459,26 +508,104 @@ class FindLinksURL(StrictBaseModel):
 
 
 class PyPIOptions(StrictBaseModel):
-    """Options related to PyPI indexes"""
+    """Options that determine the behavior of PyPI package resolution and installation"""
 
     index_url: NonEmptyStr | None = Field(
         None,
-        alias="index-url",
-        description="Alternative PyPI registry that should be used as the main index",
+        description="PyPI registry that should be used as the primary index",
         examples=["https://pypi.org/simple"],
     )
     extra_index_urls: list[NonEmptyStr] | None = Field(
         None,
-        alias="extra-index-urls",
         description="Additional PyPI registries that should be used as extra indexes",
         examples=[["https://pypi.org/simple"]],
     )
     find_links: list[FindLinksPath | FindLinksURL] = Field(
         None,
-        alias="find-links",
         description="Paths to directory containing",
         examples=[["https://pypi.org/simple"]],
     )
+    no_build_isolation: list[PyPIPackageName] = Field(
+        None,
+        description="Packages that should NOT be isolated during the build process",
+        examples=[["numpy"]],
+    )
+    index_strategy: (
+        Literal["first-index"] | Literal["unsafe-first-match"] | Literal["unsafe-best-match"] | None
+    ) = Field(
+        None,
+        description="The strategy to use when resolving packages from multiple indexes",
+        examples=["first-index", "unsafe-first-match", "unsafe-best-match"],
+    )
+
+
+#######################
+# The Package section #
+#######################
+
+
+class Package(StrictBaseModel):
+    """The package's metadata information."""
+
+    name: NonEmptyStr | None = Field(None, description="The name of the package")
+    version: NonEmptyStr | None = Field(
+        None,
+        description="The version of the project; we advise use of [SemVer](https://semver.org)",
+        examples=["1.2.3"],
+    )
+    description: NonEmptyStr | None = Field(None, description="A short description of the project")
+    authors: list[NonEmptyStr] | None = Field(
+        None, description="The authors of the project", examples=["John Doe <j.doe@prefix.dev>"]
+    )
+    license: NonEmptyStr | None = Field(
+        None,
+        description="The license of the project; we advise using an [SPDX](https://spdx.org/licenses/) identifier.",
+    )
+    license_file: PathNoBackslash | None = Field(
+        None, description="The path to the license file of the project"
+    )
+    readme: PathNoBackslash | None = Field(
+        None, description="The path to the readme file of the project"
+    )
+    homepage: AnyHttpUrl | None = Field(None, description="The URL of the homepage of the project")
+    repository: AnyHttpUrl | None = Field(
+        None, description="The URL of the repository of the project"
+    )
+    documentation: AnyHttpUrl | None = Field(
+        None, description="The URL of the documentation of the project"
+    )
+
+    build: Build = Field(..., description="The build configuration of the package")
+
+    host_dependencies: Dependencies = HostDependenciesField
+    build_dependencies: Dependencies = BuildDependenciesField
+    run_dependencies: Dependencies = RunDependenciesField
+
+    target: dict[TargetName, Target] | None = Field(
+        None,
+        description="Machine-specific aspects of the package",
+        examples=[{"linux": {"host-dependencies": {"python": "3.8"}}}],
+    )
+
+
+class Build(StrictBaseModel):
+    backend: BuildBackend = Field(..., description="The build backend to instantiate")
+    channels: list[Channel] = Field(
+        None, description="The `conda` channels that are used to fetch the build backend from"
+    )
+    additional_dependencies: Dependencies = Field(
+        None, description="Additional dependencies to install alongside the build backend"
+    )
+
+
+class BuildBackend(MatchspecTable):
+    name: NonEmptyStr = Field(None, description="The name of the build backend package")
+
+
+class PackageTarget(StrictBaseModel):
+    run_dependencies: Dependencies = RunDependenciesField
+    host_dependencies: Dependencies = HostDependenciesField
+    build_dependencies: Dependencies = BuildDependenciesField
 
 
 #######################
@@ -494,6 +621,7 @@ class BaseManifest(StrictBaseModel):
             "$id": SCHEMA_URI,
             "$schema": SCHEMA_DRAFT,
             "title": "`pixi.toml` manifest file",
+            "oneOf": [{"required": ["project"]}, {"required": ["workspace"]}],
         }
 
     schema_: str | None = Field(
@@ -504,21 +632,24 @@ class BaseManifest(StrictBaseModel):
         format="uri-reference",
     )
 
-    project: Project = Field(..., description="The project's metadata information")
+    workspace: Workspace | None = Field(None, description="The workspace's metadata information")
+    project: Workspace | None = Field(None, description="The project's metadata information")
+    package: Package | None = Field(None, description="The package's metadata information")
     dependencies: Dependencies = DependenciesField
     host_dependencies: Dependencies = HostDependenciesField
     build_dependencies: Dependencies = BuildDependenciesField
+    run_dependencies: Dependencies = Field(
+        None, description="The run-dependencies for the [package]"
+    )
     pypi_dependencies: dict[PyPIPackageName, PyPIRequirement] | None = Field(
-        None, alias="pypi-dependencies", description="The PyPI dependencies"
+        None, description="The PyPI dependencies"
     )
-    pypi_options: PyPIOptions | None = Field(
-        None, alias="pypi-options", description="Options related to PyPI indexes"
-    )
+    pypi_options: PyPIOptions | None = Field(None, description="Options related to PyPI indexes")
     tasks: dict[TaskName, TaskInlineTable | NonEmptyStr] | None = Field(
         None, description="The tasks of the project"
     )
     system_requirements: SystemRequirements | None = Field(
-        None, alias="system-requirements", description="The system requirements of the project"
+        None, description="The system requirements of the project"
     )
     environments: dict[EnvironmentName, Environment | list[FeatureName]] | None = Field(
         None,
@@ -540,7 +671,6 @@ class BaseManifest(StrictBaseModel):
     )
     pypi_options: PyPIOptions | None = Field(
         None,
-        alias="pypi-options",
         description="Options related to PyPI indexes, on the default feature",
     )
 

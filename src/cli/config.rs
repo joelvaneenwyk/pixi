@@ -1,11 +1,12 @@
+use crate::cli::cli_config::ProjectConfig;
+use crate::Project;
 use clap::Parser;
-use miette::IntoDiagnostic;
-use std::path::PathBuf;
-
-use crate::{
-    config::{self, Config},
-    consts, project,
-};
+use miette::{IntoDiagnostic, WrapErr};
+use pixi_config;
+use pixi_config::Config;
+use pixi_consts::consts;
+use rattler_conda_types::NamedChannelOrUrl;
+use std::{path::PathBuf, str::FromStr};
 
 #[derive(Parser, Debug)]
 enum Subcommand {
@@ -58,12 +59,19 @@ struct CommonArgs {
     /// Operation on system configuration
     #[arg(long, short, conflicts_with_all = &["local", "global"])]
     system: bool,
+
+    #[clap(flatten)]
+    pub project_config: ProjectConfig,
 }
 
 #[derive(Parser, Debug, Clone)]
 struct EditArgs {
     #[clap(flatten)]
     common: CommonArgs,
+
+    /// The editor to use, defaults to `EDITOR` environment variable or `nano` on Unix and `notepad` on Windows
+    #[arg(env = "EDITOR")]
+    pub editor: Option<String>,
 }
 
 #[derive(Parser, Debug, Clone)]
@@ -130,22 +138,29 @@ pub struct Args {
 pub async fn execute(args: Args) -> miette::Result<()> {
     match args.subcommand {
         Subcommand::Edit(args) => {
-            let editor = std::env::var("EDITOR").unwrap_or_else(|_| {
-                #[cfg(not(target_os = "windows"))]
-                {
-                    "nano".to_string()
-                }
-                #[cfg(target_os = "windows")]
-                {
+            let config_path = determine_config_write_path(&args.common)?;
+
+            let editor = args.editor.unwrap_or_else(|| {
+                if cfg!(windows) {
                     "notepad".to_string()
+                } else {
+                    "nano".to_string()
                 }
             });
 
-            let config_path = determine_config_write_path(&args.common)?;
-            let mut child = std::process::Command::new(editor.as_str())
-                .arg(config_path)
-                .spawn()
-                .into_diagnostic()?;
+            let mut child = if cfg!(windows) {
+                std::process::Command::new("cmd")
+                    .arg("/C")
+                    .arg(editor.as_str())
+                    .arg(&config_path)
+                    .spawn()
+                    .into_diagnostic()?
+            } else {
+                std::process::Command::new(editor.as_str())
+                    .arg(&config_path)
+                    .spawn()
+                    .into_diagnostic()?
+            };
             child.wait().into_diagnostic()?;
         }
         Subcommand::List(args) => {
@@ -182,25 +197,16 @@ pub async fn execute(args: Args) -> miette::Result<()> {
 }
 
 fn determine_project_root(common_args: &CommonArgs) -> miette::Result<Option<PathBuf>> {
-    match project::find_project_manifest() {
-        None => {
+    match Project::load_or_else_discover(common_args.project_config.manifest_path.as_deref()) {
+        Err(e) => {
             if common_args.local {
                 return Err(miette::miette!(
-                    "--local flag can only be used inside a pixi project"
+                    "--local flag can only be used inside a pixi project: '{e}'",
                 ));
             }
             Ok(None)
         }
-        Some(manifest_file) => {
-            let full_path = dunce::canonicalize(&manifest_file).into_diagnostic()?;
-            let root = full_path
-                .parent()
-                .ok_or_else(|| {
-                    miette::miette!("can not find parent of {}", manifest_file.display())
-                })?
-                .to_path_buf();
-            Ok(Some(root))
-        }
+        Ok(project) => Ok(Some(project.root().to_path_buf())),
     }
 }
 
@@ -220,7 +226,7 @@ fn load_config(common_args: &CommonArgs) -> miette::Result<Config> {
 
 fn determine_config_write_path(common_args: &CommonArgs) -> miette::Result<PathBuf> {
     let write_path = if common_args.system {
-        config::config_path_system()
+        pixi_config::config_path_system()
     } else {
         if let Some(root) = determine_project_root(common_args)? {
             if !common_args.global {
@@ -228,7 +234,7 @@ fn determine_config_write_path(common_args: &CommonArgs) -> miette::Result<PathB
             }
         }
 
-        let mut global_locations = config::config_path_global();
+        let mut global_locations = pixi_config::config_path_global();
         let mut to = global_locations
             .pop()
             .expect("should have at least one global config path");
@@ -262,11 +268,14 @@ fn alter_config(
             match key {
                 "default-channels" => {
                     let input = value.expect("value must be provided");
+                    let channel = NamedChannelOrUrl::from_str(&input)
+                        .into_diagnostic()
+                        .context("invalid channel name")?;
                     let mut new_channels = config.default_channels.clone();
                     if is_prepend {
-                        new_channels.insert(0, input);
+                        new_channels.insert(0, channel);
                     } else {
-                        new_channels.push(input);
+                        new_channels.push(channel);
                     }
                     config.default_channels = new_channels;
                 }

@@ -106,6 +106,7 @@ nav:
       - JupyterLab: ide_integration/jupyterlab.md
       - PyCharm: ide_integration/pycharm.md
       - RStudio: ide_integration/r_studio.md
+      - VSCode Devcontainer: ide_integration/devcontainer.md
   - Tutorials:
       - Python: tutorials/python.md
       - ROS 2: tutorials/ros2.md
@@ -120,19 +121,32 @@ nav:
       - Multi Platform: features/multi_platform_configuration.md
       - Multi Environment: features/multi_environment.md
       - Lockfile: features/lockfile.md
+      - System Requirements: features/system_requirements.md
+      - Global Tools: features/global_tools.md
+      - Pytorch Installation: features/pytorch.md
+  - Building Packages:
+      - Getting started: build/getting_started.md
+      - Tutorials:
+          - Building a Python package: build/python.md
+          - Building a C++ Package: build/cpp.md
+          - Multiple Packages in Workspace: build/workspace.md
+      - Dependency Types: build/dependency_types.md
+      - Build Backends: build/backends.md
   - Advanced:
       - Authentication: advanced/authentication.md
-      - Info Command: advanced/explain_info_command.md
       - Channel Logic: advanced/channel_priority.md
       - GitHub Actions: advanced/github_actions.md
+      - Info Command: advanced/explain_info_command.md
       - Updates using GitHub Actions: advanced/updates_github_actions.md
+      - Production Deployment: advanced/production_deployment.md
       - Pyproject.toml: advanced/pyproject_toml.md
   - Reference:
-      - Project Configuration: reference/project_configuration.md
+      - Pixi Manifest: reference/pixi_manifest.md
       - Pixi Configuration: reference/pixi_configuration.md
       - CLI: reference/cli.md
   - Misc:
       - Pixi vision: vision.md
+      - Packaging: packaging.md
       - Community: Community.md
       - FAQ: FAQ.md
 
@@ -149,7 +163,8 @@ plugins:
         "design_proposals/multi_environment_proposal.md": "features/multi_environment.md"
         "advanced/multi_platform_configuration.md": "features/multi_platform_configuration.md"
         "cli.md": "reference/cli.md"
-        "configuration.md": "reference/project_configuration.md"
+        "configuration.md": "reference/pixi_manifest.md"
+        "reference/project_configuration.md": "reference/pixi_manifest.md"
         "advanced/global_configuration.md": "reference/pixi_configuration.md"
 
   - search

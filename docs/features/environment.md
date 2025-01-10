@@ -11,9 +11,9 @@ This document explains what an environment looks like and how to use it.
 
 ## Structure
 
-A pixi environment is located in the `.pixi/envs` directory of the project.
-This location is **not** configurable as it is a specific design decision to keep the environments in the project directory.
+A pixi environment is located in the `.pixi/envs` directory of the project by default.
 This keeps your machine and your project clean and isolated from each other, and makes it easy to clean up after a project is done.
+While this structure is generally recommended, environments can also be stored outside of project directories by enabling [detached environments](../reference/pixi_configuration.md#detached-environments).
 
 If you look at the `.pixi/envs` directory, you will see a directory for each environment, the `default` being the one that is normally used, if you specify a custom environment the name you specified will be used.
 
@@ -39,6 +39,32 @@ If you look at the `.pixi/envs` directory, you will see a directory for each env
 These directories are conda environments, and you can use them as such, but you cannot manually edit them, this should always go through the `pixi.toml`.
 Pixi will always make sure the environment is in sync with the `pixi.lock` file.
 If this is not the case then all the commands that use the environment will automatically update the environment, e.g. `pixi run`, `pixi shell`.
+
+### Environment Installation Metadata
+On environment installation, pixi will write a small file to the environment that contains some metadata about installation.
+This file is called `pixi` and is located in the `conda-meta` folder of the environment.
+This file contains the following information:
+
+- `manifest_path`: The path to the manifest file that describes the project used to create this environment
+- `environment_name`: The name of the environment
+- `pixi_version`: The version of pixi that was used to create this environment
+- `environment_lock_file_hash`: The hash of the `pixi.lock` file that was used to create this environment
+
+```json
+{
+  "manifest_path": "/home/user/dev/pixi/pixi.toml",
+  "environment_name": "default",
+  "pixi_version": "0.34.0",
+  "environment_lock_file_hash": "4f36ee620f10329d"
+}
+```
+
+The `environment_lock_file_hash` is used to check if the environment is in sync with the `pixi.lock` file.
+If the hash of the `pixi.lock` file is different from the hash in the `pixi` file, pixi will update the environment.
+
+This is used to speedup activation, in order to trigger a full revalidation pass `--revalidate` to the `pixi run` or `pixi shell` command.
+A broken environment would typically not be found with a hash comparison, but a revalidation would reinstall the environment.
+By default, all lock file modifying commands will always use the revalidation and on `pixi install` it always revalidates.
 
 ### Cleaning up
 
@@ -116,7 +142,8 @@ $ (default) which python
     Of course you can use `pixi` to install `direnv` globally. We recommend to run
 
     ```
-    pixi global install direnv```
+    pixi global install direnv
+    ```
 
     to install the latest version of `direnv` on your computer.
 
@@ -156,10 +183,11 @@ The following environment variables are set by pixi, when using the `pixi run`, 
 - `PIXI_PROJECT_VERSION`: The version of the project.
 - `PIXI_PROMPT`: The prompt to use in the shell, also used by `pixi shell` itself.
 - `PIXI_ENVIRONMENT_NAME`: The name of the environment, defaults to `default`.
-- `PIXI_ENVIRONMENT_PLATFORMS`: The path to the environment.
+- `PIXI_ENVIRONMENT_PLATFORMS`: Comma separated list of platforms supported by the project.
 - `CONDA_PREFIX`: The path to the environment. (Used by multiple tools that already understand conda environments)
 - `CONDA_DEFAULT_ENV`: The name of the environment. (Used by multiple tools that already understand conda environments)
 - `PATH`: We prepend the `bin` directory of the environment to the `PATH` variable, so you can use the tools installed in the environment directly.
+- `INIT_CWD`: ONLY IN `pixi run`: The directory where the command was run from.
 
 !!! note
     Even though the variables are environment variables these cannot be overridden. E.g. you can not change the root of the project by setting `PIXI_PROJECT_ROOT` in the environment.
@@ -173,24 +201,25 @@ Solving is a mathematical problem and can take some time, but we take pride in t
 If you want to learn more about the solving process, you can read these:
 
 - [Rattler(conda) resolver blog](https://prefix.dev/blog/the_new_rattler_resolver)
-- [Rip(PyPI) resolver blog](https://prefix.dev/blog/introducing_rip)
+- [UV(PyPI) resolver blog](https://astral.sh/blog/uv-unified-python-packaging)
 
 Pixi solves both the `conda` and `PyPI` dependencies, where the `PyPI` dependencies use the conda packages as a base, so you can be sure that the packages are compatible with each other.
-These solvers are split between the [`rattler`](https://github.com/mamba-org/rattler) and [`rip`](https://github.com/prefix-dev/rip) library, these control the heavy lifting of the solving process, which is executed by our custom SAT solver: [`resolvo`](https://github.com/mamba-org/resolvo).
+These solvers are split between the [`rattler`](https://github.com/mamba-org/rattler) and [`uv`](https://github.com/astral-sh/uv) library, these control the heavy lifting of the solving process, which is executed by our custom SAT solver: [`resolvo`](https://github.com/mamba-org/resolvo).
 `resolve` is able to solve multiple ecosystem like `conda` and `PyPI`. It implements the lazy solving process for `PyPI` packages, which means that it only downloads the metadata of the packages that are needed to solve the environment.
 It also supports the `conda` way of solving, which means that it downloads the metadata of all the packages at once and then solves in one go.
 
-For the `[pypi-dependencies]`, `rip` implements `sdist` building to retrieve the metadata of the packages, and `wheel` building to install the packages.
+For the `[pypi-dependencies]`, `uv` implements `sdist` building to retrieve the metadata of the packages, and `wheel` building to install the packages.
 For this building step, `pixi` requires to first install `python` in the (conda)`[dependencies]` section of the `pixi.toml` file.
 This will always be slower than the pure conda solves. So for the best pixi experience you should stay within the `[dependencies]` section of the `pixi.toml` file.
 
-## Caching
+## Caching packages
 
 Pixi caches all previously downloaded packages in a cache folder.
 This cache folder is shared between all pixi projects and globally installed tools.
 
-Normally the locations would be:
-Platform-specific default cache folder:
+Normally the location would be the following
+platform-specific default cache folder:
+
 - Linux: `$XDG_CACHE_HOME/rattler` or `$HOME/.cache/rattler`
 - macOS: `$HOME/Library/Caches/rattler`
 - Windows: `%LOCALAPPDATA%\rattler`
@@ -200,6 +229,7 @@ This location is configurable by setting the `PIXI_CACHE_DIR` or `RATTLER_CACHE_
 When you want to clean the cache, you can simply delete the cache directory, and pixi will re-create the cache when needed.
 
 The cache contains multiple folders concerning different caches from within pixi.
+
 - `pkgs`: Contains the downloaded/unpacked `conda` packages.
 - `repodata`: Contains the `conda` repodata cache.
 - `uv-cache`: Contains the `uv` cache. This includes multiple caches, e.g. `built-wheels` `wheels` `archives`

@@ -1,68 +1,37 @@
-use crate::environment::{get_up_to_date_prefix, LockFileUsage};
-use crate::project::manifest::channel::PrioritizedChannel;
-use crate::project::manifest::FeatureName;
-use crate::Project;
-use clap::Parser;
-use miette::IntoDiagnostic;
-use rattler_conda_types::Channel;
-#[derive(Parser, Debug, Default)]
-pub struct Args {
-    /// The channel name or URL
-    #[clap(required = true, num_args=1..)]
-    pub channel: Vec<String>,
+use crate::{
+    environment::{get_update_lock_file_and_prefix, LockFileUsage},
+    lock_file::UpdateMode,
+    Project, UpdateLockFileOptions,
+};
 
-    /// Don't update the environment, only add changed packages to the lock-file.
-    #[clap(long)]
-    pub no_install: bool,
+use super::AddRemoveArgs;
 
-    /// The name of the feature to add the channel to.
-    #[clap(long, short)]
-    pub feature: Option<String>,
-}
-
-pub async fn execute(mut project: Project, args: Args) -> miette::Result<()> {
-    let feature_name = args
-        .feature
-        .map_or(FeatureName::Default, FeatureName::Named);
-
-    // Determine which channels are missing
-    let channels = args
-        .channel
-        .into_iter()
-        .map(|channel_str| {
-            Channel::from_str(&channel_str, project.config().channel_config())
-                .map(|channel| (channel_str, channel))
-        })
-        .collect::<Result<Vec<_>, _>>()
-        .into_diagnostic()?;
+pub async fn execute(args: AddRemoveArgs) -> miette::Result<()> {
+    let mut project = Project::load_or_else_discover(args.project_config.manifest_path.as_deref())?
+        .with_cli_config(args.clone().prefix_update_config.config);
 
     // Add the channels to the manifest
     project.manifest.add_channels(
-        channels
-            .clone()
-            .into_iter()
-            .map(|(_name, channel)| channel)
-            .map(PrioritizedChannel::from_channel),
-        &feature_name,
+        args.prioritized_channels(),
+        &args.feature_name(),
+        args.prepend,
     )?;
 
     // TODO: Update all environments touched by the features defined.
-    get_up_to_date_prefix(
+    get_update_lock_file_and_prefix(
         &project.default_environment(),
-        LockFileUsage::Update,
-        args.no_install,
+        UpdateMode::Revalidate,
+        UpdateLockFileOptions {
+            lock_file_usage: LockFileUsage::Update,
+            no_install: args.prefix_update_config.no_install(),
+            max_concurrent_solves: project.config().max_concurrent_solves(),
+        },
     )
     .await?;
     project.save()?;
+
     // Report back to the user
-    for (name, channel) in channels {
-        eprintln!(
-            "{}Added {} ({})",
-            console::style(console::Emoji("✔ ", "")).green(),
-            name,
-            channel.base_url()
-        );
-    }
+    args.report("Added", &project.channel_config())?;
 
     Ok(())
 }

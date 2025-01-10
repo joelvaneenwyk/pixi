@@ -1,47 +1,25 @@
-use super::{
-    has_features::HasFeatures,
-    manifest::{LibCSystemRequirement, SystemRequirements},
-};
 use crate::project::errors::UnsupportedPlatformError;
 use crate::project::Environment;
 use itertools::Itertools;
 use miette::Diagnostic;
+use pixi_default_versions::{default_glibc_version, default_linux_version, default_mac_os_version};
+use pixi_manifest::{LibCSystemRequirement, SystemRequirements};
 use rattler_conda_types::{GenericVirtualPackage, Platform, Version};
 use rattler_virtual_packages::{
     Archspec, Cuda, DetectVirtualPackageError, LibC, Linux, Osx, VirtualPackage,
+    VirtualPackageOverrides,
 };
 use std::collections::HashMap;
 use thiserror::Error;
 
-/// The default GLIBC version to use. This is used when no system requirements are specified.
-pub fn default_glibc_version() -> Version {
-    "2.28".parse().unwrap()
-}
-
-/// The default linux version to use. This is used when no system requirements are specified.
-pub fn default_linux_version() -> Version {
-    "5.10".parse().unwrap()
-}
-
-/// Returns the default Mac OS version for the specified platform. The platform must refer to a
-/// MacOS platform.
-pub fn default_mac_os_version(platform: Platform) -> Version {
-    match platform {
-        Platform::OsxArm64 => "13.0".parse().unwrap(),
-        Platform::Osx64 => "13.0".parse().unwrap(),
-        _ => panic!(
-            "default_mac_os_version() called with non-osx platform: {}",
-            platform
-        ),
-    }
-}
+use pixi_manifest::FeaturesExt;
 
 /// Returns a reasonable modern set of virtual packages that should be safe enough to assume.
 /// At the time of writing, this is in sync with the conda-lock set of minimal virtual packages.
 /// <https://github.com/conda/conda-lock/blob/3d36688278ebf4f65281de0846701d61d6017ed2/conda_lock/virtual_package.py#L175>
 ///
 /// The method also takes into account system requirements specified in the project manifest.
-pub fn get_minimal_virtual_packages(
+pub(crate) fn get_minimal_virtual_packages(
     platform: Platform,
     system_requirements: &SystemRequirements,
 ) -> Vec<VirtualPackage> {
@@ -97,7 +75,7 @@ pub fn get_minimal_virtual_packages(
 impl Environment<'_> {
     /// Returns the set of virtual packages to use for the specified platform. This method
     /// takes into account the system requirements specified in the project manifest.
-    pub fn virtual_packages(&self, platform: Platform) -> Vec<VirtualPackage> {
+    pub(crate) fn virtual_packages(&self, platform: Platform) -> Vec<VirtualPackage> {
         get_minimal_virtual_packages(platform, &self.system_requirements())
     }
 }
@@ -135,7 +113,7 @@ pub enum VerifyCurrentPlatformError {
 }
 
 /// Verifies if the current platform satisfies the minimal virtual package requirements.
-pub fn verify_current_platform_has_required_virtual_packages(
+pub(crate) fn verify_current_platform_has_required_virtual_packages(
     environment: &Environment<'_>,
 ) -> Result<(), VerifyCurrentPlatformError> {
     let current_platform = environment.best_platform();
@@ -151,7 +129,7 @@ pub fn verify_current_platform_has_required_virtual_packages(
         )));
     }
 
-    let system_virtual_packages = VirtualPackage::current()?
+    let system_virtual_packages = VirtualPackage::detect(&VirtualPackageOverrides::from_env())?
         .iter()
         .cloned()
         .map(GenericVirtualPackage::from)
@@ -201,8 +179,8 @@ pub fn verify_current_platform_has_required_virtual_packages(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::project::manifest::SystemRequirements;
     use insta::assert_debug_snapshot;
+    use pixi_manifest::SystemRequirements;
     use rattler_conda_types::Platform;
 
     // Regression test on the virtual packages so there is not accidental changes

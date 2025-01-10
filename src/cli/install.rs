@@ -1,16 +1,17 @@
-use crate::config::ConfigCli;
-use crate::environment::get_up_to_date_prefix;
-use crate::Project;
+use crate::cli::cli_config::ProjectConfig;
+use crate::environment::get_update_lock_file_and_prefix;
+use crate::lock_file::UpdateMode;
+use crate::{Project, UpdateLockFileOptions};
 use clap::Parser;
+use fancy_display::FancyDisplay;
 use itertools::Itertools;
-use std::path::PathBuf;
+use pixi_config::ConfigCli;
 
 /// Install all dependencies
 #[derive(Parser, Debug)]
 pub struct Args {
-    /// The path to 'pixi.toml' or 'pyproject.toml'
-    #[arg(long)]
-    pub manifest_path: Option<PathBuf>,
+    #[clap(flatten)]
+    pub project_config: ProjectConfig,
 
     #[clap(flatten)]
     pub lock_file_usage: super::LockFileUsageArgs,
@@ -27,8 +28,8 @@ pub struct Args {
 }
 
 pub async fn execute(args: Args) -> miette::Result<()> {
-    let project =
-        Project::load_or_else_discover(args.manifest_path.as_deref())?.with_cli_config(args.config);
+    let project = Project::load_or_else_discover(args.project_config.manifest_path.as_deref())?
+        .with_cli_config(args.config);
 
     // Install either:
     //
@@ -50,7 +51,19 @@ pub async fn execute(args: Args) -> miette::Result<()> {
     let mut installed_envs = Vec::with_capacity(envs.len());
     for env in envs {
         let environment = project.environment_from_name_or_env_var(Some(env))?;
-        get_up_to_date_prefix(&environment, args.lock_file_usage.into(), false).await?;
+
+        // Update the prefix by installing all packages
+        get_update_lock_file_and_prefix(
+            &environment,
+            UpdateMode::Revalidate,
+            UpdateLockFileOptions {
+                lock_file_usage: args.lock_file_usage.into(),
+                no_install: false,
+                max_concurrent_solves: project.config().max_concurrent_solves(),
+            },
+        )
+        .await?;
+
         installed_envs.push(environment.name().clone());
     }
 
@@ -78,6 +91,6 @@ pub async fn execute(args: Args) -> miette::Result<()> {
         );
     }
 
-    Project::warn_on_discovered_from_env(args.manifest_path.as_deref());
+    Project::warn_on_discovered_from_env(args.project_config.manifest_path.as_deref());
     Ok(())
 }

@@ -1,19 +1,22 @@
-use crate::project::manifest::EnvironmentName;
-use crate::project::manifest::FeatureName;
+use crate::cli::cli_config::ProjectConfig;
 use crate::project::virtual_packages::verify_current_platform_has_required_virtual_packages;
 use crate::project::Environment;
-use crate::task::{quote, Alias, CmdArgs, Execute, Task, TaskName};
 use crate::Project;
 use clap::Parser;
+use fancy_display::FancyDisplay;
 use indexmap::IndexMap;
 use itertools::Itertools;
+use pixi_manifest::task::{quote, Alias, CmdArgs, Execute, Task, TaskName};
+use pixi_manifest::EnvironmentName;
+use pixi_manifest::FeatureName;
 use rattler_conda_types::Platform;
+use serde::Serialize;
+use serde_with::serde_as;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::error::Error;
 use std::io;
 use std::path::PathBuf;
 use std::str::FromStr;
-use toml_edit::{Array, Item, Table, Value};
 
 #[derive(Parser, Debug)]
 pub enum Operation {
@@ -22,8 +25,7 @@ pub enum Operation {
     Add(AddArgs),
 
     /// Remove a command from the project
-    // BREAK: This should only have the `rm` alias
-    #[clap(visible_alias = "rm", alias = "r")]
+    #[clap(visible_alias = "rm")]
     Remove(RemoveArgs),
 
     /// Alias another specific command
@@ -135,6 +137,11 @@ pub struct ListArgs {
     /// If not specified, the default environment is used.
     #[arg(long, short)]
     pub environment: Option<String>,
+
+    /// List as json instead of a tree
+    /// If not specified, the default environment is used.
+    #[arg(long)]
+    pub json: bool,
 }
 
 impl From<AddArgs> for Task {
@@ -212,9 +219,8 @@ pub struct Args {
     #[clap(subcommand)]
     pub operation: Operation,
 
-    /// The path to 'pixi.toml' or 'pyproject.toml'
-    #[arg(long)]
-    pub manifest_path: Option<PathBuf>,
+    #[clap(flatten)]
+    pub project_config: ProjectConfig,
 }
 
 fn print_heading(value: &str) {
@@ -268,27 +274,8 @@ fn list_tasks(
     Ok(())
 }
 
-fn get_tasks_per_env(
-    task_list: HashSet<TaskName>,
-    environments: Vec<Environment>,
-) -> HashMap<Environment, HashMap<TaskName, Task>> {
-    let mut tasks_per_env: HashMap<Environment, HashMap<TaskName, Task>> = HashMap::new();
-    for env in environments {
-        let mut tasks: HashMap<TaskName, Task> = HashMap::new();
-        let this_env_tasks = env.tasks(Some(env.best_platform())).unwrap_or_default();
-        for taskname in task_list.iter() {
-            // if the task is in the environment, add it to the list
-            if let Some(&task) = this_env_tasks.get(taskname) {
-                tasks.insert(taskname.clone(), task.clone());
-            }
-        }
-        tasks_per_env.insert(env, tasks);
-    }
-    tasks_per_env
-}
-
 pub fn execute(args: Args) -> miette::Result<()> {
-    let mut project = Project::load_or_else_discover(args.manifest_path.as_deref())?;
+    let mut project = Project::load_or_else_discover(args.project_config.manifest_path.as_deref())?;
     match args.operation {
         Operation::Add(args) => {
             let name = &args.name;
@@ -388,6 +375,11 @@ pub fn execute(args: Args) -> miette::Result<()> {
             );
         }
         Operation::List(args) => {
+            if args.json {
+                print_tasks_json(&project);
+                return Ok(());
+            }
+
             let explicit_environment = args
                 .environment
                 .map(|n| EnvironmentName::from_str(n.as_str()))
@@ -398,19 +390,29 @@ pub fn execute(args: Args) -> miette::Result<()> {
                         .ok_or_else(|| miette::miette!("unknown environment '{n}'"))
                 })
                 .transpose()?;
-            let available_tasks: HashSet<TaskName> =
+
+            let env_task_map: HashMap<Environment, HashSet<TaskName>> =
                 if let Some(explicit_environment) = explicit_environment {
-                    explicit_environment.get_filtered_tasks()
+                    HashMap::from([(
+                        explicit_environment.clone(),
+                        explicit_environment.get_filtered_tasks(),
+                    )])
                 } else {
                     project
                         .environments()
-                        .into_iter()
-                        .filter(|env| {
-                            verify_current_platform_has_required_virtual_packages(env).is_ok()
+                        .iter()
+                        .filter_map(|env| {
+                            if verify_current_platform_has_required_virtual_packages(env).is_ok() {
+                                Some((env.clone(), env.get_filtered_tasks()))
+                            } else {
+                                None
+                            }
                         })
-                        .flat_map(|env| env.get_filtered_tasks())
                         .collect()
                 };
+
+            let available_tasks: HashSet<TaskName> =
+                env_task_map.values().flatten().cloned().collect();
 
             if available_tasks.is_empty() {
                 eprintln!("No tasks found",);
@@ -427,68 +429,129 @@ pub fn execute(args: Args) -> miette::Result<()> {
                 return Ok(());
             }
 
-            let tasks_per_env = get_tasks_per_env(available_tasks, project.environments());
+            let tasks_per_env = env_task_map
+                .into_iter()
+                .map(|(env, task_names)| {
+                    let tasks: HashMap<TaskName, Task> = task_names
+                        .into_iter()
+                        .filter_map(|task_name| {
+                            env.task(&task_name, Some(env.best_platform()))
+                                .ok()
+                                .map(|task| (task_name, task.clone()))
+                        })
+                        .collect();
+                    (env, tasks)
+                })
+                .collect();
 
             list_tasks(tasks_per_env, args.summary).expect("io error when printing tasks");
         }
     };
 
-    Project::warn_on_discovered_from_env(args.manifest_path.as_deref());
+    Project::warn_on_discovered_from_env(args.project_config.manifest_path.as_deref());
     Ok(())
 }
 
-impl From<Task> for Item {
-    fn from(value: Task) -> Self {
-        match value {
-            Task::Plain(str) => Item::Value(str.into()),
-            Task::Execute(process) => {
-                let mut table = Table::new().into_inline_table();
-                match process.cmd {
-                    CmdArgs::Single(cmd_str) => {
-                        table.insert("cmd", cmd_str.into());
-                    }
-                    CmdArgs::Multiple(cmd_strs) => {
-                        table.insert("cmd", Value::Array(Array::from_iter(cmd_strs)));
-                    }
-                }
-                if !process.depends_on.is_empty() {
-                    table.insert(
-                        "depends-on",
-                        Value::Array(Array::from_iter(
-                            process
-                                .depends_on
-                                .into_iter()
-                                .map(String::from)
-                                .map(Value::from),
-                        )),
-                    );
-                }
-                if let Some(cwd) = process.cwd {
-                    table.insert("cwd", cwd.to_string_lossy().to_string().into());
-                }
-                if let Some(env) = process.env {
-                    table.insert("env", Value::InlineTable(env.into_iter().collect()));
-                }
-                if let Some(description) = process.description {
-                    table.insert("description", description.into());
-                }
-                Item::Value(Value::InlineTable(table))
+fn print_tasks_json(project: &Project) {
+    let env_feature_task_map: Vec<EnvTasks> = build_env_feature_task_map(project);
+
+    let json_string =
+        serde_json::to_string_pretty(&env_feature_task_map).expect("Failed to serialize tasks");
+    println!("{}", json_string);
+}
+
+fn build_env_feature_task_map(project: &Project) -> Vec<EnvTasks> {
+    project
+        .environments()
+        .iter()
+        .sorted_by_key(|env| env.name().to_string())
+        .filter_map(|env: &Environment<'_>| {
+            if verify_current_platform_has_required_virtual_packages(env).is_err() {
+                return None;
             }
-            Task::Alias(alias) => {
-                let mut table = Table::new().into_inline_table();
-                table.insert(
-                    "depends-on",
-                    Value::Array(Array::from_iter(
-                        alias
-                            .depends_on
-                            .into_iter()
-                            .map(String::from)
-                            .map(Value::from),
-                    )),
-                );
-                Item::Value(Value::InlineTable(table))
-            }
-            _ => Item::None,
+            Some(EnvTasks::from(env))
+        })
+        .collect()
+}
+
+#[derive(Serialize, Debug)]
+struct EnvTasks {
+    environment: String,
+    features: Vec<SerializableFeature>,
+}
+
+impl From<&Environment<'_>> for EnvTasks {
+    fn from(env: &Environment) -> Self {
+        Self {
+            environment: env.name().to_string(),
+            features: env
+                .feature_tasks()
+                .iter()
+                .map(|(feature_name, task_map)| {
+                    SerializableFeature::from((*feature_name, task_map))
+                })
+                .collect(),
+        }
+    }
+}
+
+#[derive(Serialize, Debug)]
+struct SerializableFeature {
+    name: String,
+    tasks: Vec<SerializableTask>,
+}
+
+#[derive(Serialize, Debug)]
+struct SerializableTask {
+    name: String,
+    #[serde(flatten)]
+    info: TaskInfo,
+}
+
+impl From<(&FeatureName, &HashMap<&TaskName, &Task>)> for SerializableFeature {
+    fn from((feature_name, task_map): (&FeatureName, &HashMap<&TaskName, &Task>)) -> Self {
+        Self {
+            name: feature_name.to_string(),
+            tasks: task_map
+                .iter()
+                .map(|(task_name, task)| SerializableTask {
+                    name: task_name.to_string(),
+                    info: TaskInfo::from(*task),
+                })
+                .collect(),
+        }
+    }
+}
+
+/// Collection of task properties for displaying in the UI.
+#[serde_as]
+#[derive(Serialize, Debug)]
+pub struct TaskInfo {
+    cmd: Option<String>,
+    description: Option<String>,
+    depends_on: Vec<TaskName>,
+    cwd: Option<PathBuf>,
+    env: Option<IndexMap<String, String>>,
+    clean_env: bool,
+    inputs: Option<Vec<String>>,
+    outputs: Option<Vec<String>>,
+}
+
+impl From<&Task> for TaskInfo {
+    fn from(task: &Task) -> Self {
+        TaskInfo {
+            cmd: task.as_single_command().map(|cmd| cmd.to_string()),
+            description: task.description().map(|desc| desc.to_string()),
+            depends_on: task.depends_on().to_vec(),
+            cwd: task.working_directory().map(PathBuf::from),
+            env: task.env().cloned(),
+            clean_env: task.clean_env(),
+            inputs: task
+                .inputs()
+                .map(|inputs| inputs.iter().map(String::from).collect()),
+            outputs: task
+                .outputs()
+                .map(|outputs| outputs.iter().map(String::from).collect()),
         }
     }
 }

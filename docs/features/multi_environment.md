@@ -180,7 +180,7 @@ pixi shell --environment cuda
 ➜ pixi run -e test any_command
 # Runs any_command in the `test` environment which doesn't require to be predefined as a task.
 ```
-### Abmigious Environment Selection
+### Ambiguous Environment Selection
 It's possible to define tasks in multiple environments, in this case the user should be prompted to select the environment.
 
 Here is a simple example of a task only manifest:
@@ -207,7 +207,7 @@ default = ["test", "dev"]
 test = ["test"]
 dev = ["dev"]
 ```
-Trying to run the `abmi` task will prompt the user to select the environment.
+Trying to run the `ambi` task will prompt the user to select the environment.
 As it is available in all environments.
 
 ```shell title="Interactive selection of environments if task is in multiple environments"
@@ -443,13 +443,15 @@ Dev
 
     [feature.mlx]
     platforms = ["osx-arm64"]
+    # MLX is only available on macOS >=13.5 (>14.0 is recommended)
+    system-requirements = {macos = "13.5"}
 
     [feature.mlx.tasks]
     train-model = "python train.py --mlx"
     evaluate-model = "python test.py --mlx"
 
     [feature.mlx.dependencies]
-    mlx = ">=0.5.0,<0.6.0"
+    mlx = ">=0.16.0,<0.17.0"
 
     [feature.cpu]
     platforms = ["win-64", "linux-64", "osx-64", "osx-arm64"]

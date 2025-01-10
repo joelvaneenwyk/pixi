@@ -1,4 +1,4 @@
-use std::{collections::HashMap, io::Write, path::PathBuf};
+use std::{collections::HashMap, io::Write};
 
 use clap::Parser;
 use miette::IntoDiagnostic;
@@ -8,36 +8,48 @@ use rattler_shell::{
     shell::{CmdExe, PowerShell, Shell, ShellEnum, ShellScript},
 };
 
-#[cfg(target_family = "unix")]
-use crate::unix::PtySession;
+use crate::cli::cli_config::{PrefixUpdateConfig, ProjectConfig};
+use crate::lock_file::UpdateMode;
 use crate::{
-    activation::CurrentEnvVarBehavior,
-    cli::LockFileUsageArgs,
-    config::ConfigCliPrompt,
-    environment::get_up_to_date_prefix,
-    project::{
-        manifest::EnvironmentName,
-        virtual_packages::verify_current_platform_has_required_virtual_packages,
-    },
-    prompt, Project,
+    activation::CurrentEnvVarBehavior, environment::get_update_lock_file_and_prefix,
+    project::virtual_packages::verify_current_platform_has_required_virtual_packages, prompt,
+    Project, UpdateLockFileOptions,
 };
+use pixi_config::{ConfigCliActivation, ConfigCliPrompt};
+use pixi_manifest::EnvironmentName;
+#[cfg(target_family = "unix")]
+use pixi_pty::unix::PtySession;
 
 /// Start a shell in the pixi environment of the project
 #[derive(Parser, Debug)]
 pub struct Args {
-    /// The path to 'pixi.toml' or 'pyproject.toml'
-    #[arg(long)]
-    manifest_path: Option<PathBuf>,
+    #[clap(flatten)]
+    project_config: ProjectConfig,
 
     #[clap(flatten)]
-    lock_file_usage: LockFileUsageArgs,
+    pub prefix_update_config: PrefixUpdateConfig,
 
     /// The environment to activate in the shell
     #[arg(long, short)]
     environment: Option<String>,
 
     #[clap(flatten)]
-    config: ConfigCliPrompt,
+    prompt_config: ConfigCliPrompt,
+
+    #[clap(flatten)]
+    activation_config: ConfigCliActivation,
+}
+
+/// Set up Ctrl-C handler to ignore it (the child process should react on CTRL-C)
+fn ignore_ctrl_c() {
+    tokio::spawn(async move {
+        loop {
+            tokio::signal::ctrl_c()
+                .await
+                .expect("Failed to listen for Ctrl+C");
+            // Do nothing, effectively ignoring the Ctrl+C signal
+        }
+    });
 }
 
 fn start_powershell(
@@ -70,6 +82,8 @@ fn start_powershell(
     command.arg("-NoExit");
     command.arg("-File");
     command.arg(&temp_path);
+
+    ignore_ctrl_c();
 
     let mut process = command.spawn().into_diagnostic()?;
     Ok(process.wait().into_diagnostic()?.code())
@@ -104,6 +118,8 @@ fn start_cmdexe(
     command.arg("/K");
     command.arg(temp_file.path());
 
+    ignore_ctrl_c();
+
     let mut process = command.spawn().into_diagnostic()?;
     Ok(process.wait().into_diagnostic()?.code())
 }
@@ -133,6 +149,9 @@ async fn start_unix_shell<T: Shell + Copy + 'static>(
         shell_script.set_env_var(key, value).into_diagnostic()?;
     }
 
+    const DONE_STR: &str = "=== DONE ===";
+    shell_script.echo(DONE_STR).into_diagnostic()?;
+
     temp_file
         .write_all(shell_script.contents().into_diagnostic()?.as_bytes())
         .into_diagnostic()?;
@@ -158,7 +177,7 @@ async fn start_unix_shell<T: Shell + Copy + 'static>(
     let mut process = PtySession::new(command).into_diagnostic()?;
     process.send_line(source_command).into_diagnostic()?;
 
-    process.interact().into_diagnostic()
+    process.interact(Some(DONE_STR)).into_diagnostic()
 }
 
 /// Starts a nu shell.
@@ -207,8 +226,14 @@ async fn start_nu_shell(
 }
 
 pub async fn execute(args: Args) -> miette::Result<()> {
-    let project =
-        Project::load_or_else_discover(args.manifest_path.as_deref())?.with_cli_config(args.config);
+    let config = args
+        .activation_config
+        .merge_config(args.prompt_config.into())
+        .merge_config(args.prefix_update_config.config.clone().into());
+
+    let project = Project::load_or_else_discover(args.project_config.manifest_path.as_deref())?
+        .with_cli_config(config);
+
     let environment = project.environment_from_name_or_env_var(args.environment)?;
 
     verify_current_platform_has_required_virtual_packages(&environment).into_diagnostic()?;
@@ -219,11 +244,26 @@ pub async fn execute(args: Args) -> miette::Result<()> {
     };
 
     // Make sure environment is up-to-date, default to install, users can avoid this with frozen or locked.
-    get_up_to_date_prefix(&environment, args.lock_file_usage.into(), false).await?;
+    let (lock_file_data, _prefix) = get_update_lock_file_and_prefix(
+        &environment,
+        UpdateMode::QuickValidate,
+        UpdateLockFileOptions {
+            lock_file_usage: args.prefix_update_config.lock_file_usage(),
+            no_install: args.prefix_update_config.no_install(),
+            max_concurrent_solves: project.config().max_concurrent_solves(),
+        },
+    )
+    .await?;
 
     // Get the environment variables we need to set activate the environment in the shell.
     let env = project
-        .get_activated_environment_variables(&environment, CurrentEnvVarBehavior::Exclude)
+        .get_activated_environment_variables(
+            &environment,
+            CurrentEnvVarBehavior::Exclude,
+            Some(&lock_file_data.lock_file),
+            project.config().force_activate(),
+            project.config().experimental_activation_cache_usage(),
+        )
         .await?;
 
     tracing::debug!("Pixi environment activation:\n{:?}", env);
@@ -232,6 +272,8 @@ pub async fn execute(args: Args) -> miette::Result<()> {
     let interactive_shell: ShellEnum = ShellEnum::from_parent_process()
         .or_else(ShellEnum::from_env)
         .unwrap_or_default();
+
+    tracing::info!("Starting shell: {:?}", interactive_shell);
 
     let prompt = if project.config().change_ps1() {
         match interactive_shell {

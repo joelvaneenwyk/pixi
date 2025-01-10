@@ -13,13 +13,10 @@
 <h1 align="center">
 
 ![License][license-badge]
-[![Build Status][build-badge]][build]
 [![Project Chat][chat-badge]][chat-url]
 [![Pixi Badge][pixi-badge]][pixi-url]
 
 [license-badge]: https://img.shields.io/badge/license-BSD--3--Clause-blue?style=flat-square
-[build-badge]: https://img.shields.io/github/actions/workflow/status/prefix-dev/pixi/rust.yml?style=flat-square&branch=main
-[build]: https://github.com/prefix-dev/pixi/actions/
 [chat-badge]: https://img.shields.io/discord/1082332781146800168.svg?label=&logo=discord&logoColor=ffffff&color=7389D8&labelColor=6A7EC2&style=flat-square
 [chat-url]: https://discord.gg/kKV8ZxyzY4
 [pixi-badge]:https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/prefix-dev/pixi/main/assets/badge/v0.json&style=flat-square
@@ -113,54 +110,63 @@ Afterwards, restart the shell or source the shell config file.
 
 #### Bash (default on most Linux systems)
 
+Add the following to the end of `~/.bashrc`:
+
 ```bash
-echo 'eval "$(pixi completion --shell bash)"' >> ~/.bashrc
+# ~/.bashrc
+
+eval "$(pixi completion --shell bash)"
 ```
 
 #### Zsh (default on macOS)
 
+Add the following to the end of `~/.zshrc`:
+
+
 ```zsh
-echo 'eval "$(pixi completion --shell zsh)"' >> ~/.zshrc
+# ~/.zshrc
+
+eval "$(pixi completion --shell zsh)"
 ```
 
 #### PowerShell (pre-installed on all Windows systems)
 
+Add the following to the end of `Microsoft.PowerShell_profile.ps1`.
+You can check the location of this file by querying the `$PROFILE` variable in PowerShell.
+Typically the path is `~\Documents\PowerShell\Microsoft.PowerShell_profile.ps1` or
+`~/.config/powershell/Microsoft.PowerShell_profile.ps1` on -Nix.
+
 ```pwsh
-Add-Content -Path $PROFILE -Value '(& pixi completion --shell powershell) | Out-String | Invoke-Expression'
-```
-
-If this fails with "Failure because no profile file exists", make sure your profile file exists.
-If not, create it with:
-
-```PowerShell
-New-Item -Path $PROFILE -ItemType File -Force
+(& pixi completion --shell powershell) | Out-String | Invoke-Expression
 ```
 
 #### Fish
 
+Add the following to the end of `~/.config/fish/config.fish`:
+
 ```fish
-echo 'pixi completion --shell fish | source' >> ~/.config/fish/config.fish
+# ~/.config/fish/config.fish
+
+pixi completion --shell fish | source
 ```
 
 #### Nushell
 
-Add the following to the end of your Nushell env file (find it by running `$nu.env-path` in Nushell):
+Add the following to your Nushell config file (find it by running `$nu.config-path` in Nushell):
 
 ```nushell
-mkdir ~/.cache/pixi
-pixi completion --shell nushell | save -f ~/.cache/pixi/completions.nu
-```
-
-And add the following to the end of your Nushell configuration (find it by running `$nu.config-path`):
-
-```nushell
-use ~/.cache/pixi/completions.nu *
+mkdir $"($nu.data-dir)/vendor/autoload"
+pixi completion --shell nushell | save --force $"($nu.data-dir)/vendor/autoload/pixi-completions.nu"
 ```
 
 #### Elvish
 
+Add the following to the end of `~/.elvish/rc.elv`:
+
 ```elv
-echo 'eval (pixi completion --shell elvish | slurp)' >> ~/.elvish/rc.elv
+# ~/.elvish/rc.elv
+
+eval (pixi completion --shell elvish | slurp)
 ```
 
 ### Distro Packages
@@ -304,8 +310,8 @@ You can use pixi in GitHub Actions to install dependencies and run commands.
 It supports automatic caching of your environments.
 
 ```yml
-- uses: prefix-dev/setup-pixi@v0.6.0
-- run: pixi run cowpy "Thanks for using pixi"
+- uses: prefix-dev/setup-pixi@v0.8.1
+- run: pixi exec cowpy "Thanks for using pixi"
 ```
 
 See the [documentation](https://pixi.sh/latest/advanced/github_actions) for more details.

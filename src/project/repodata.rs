@@ -1,44 +1,16 @@
-use crate::config::Config;
-use crate::{config, project::Project};
-use rattler_repodata_gateway::{ChannelConfig, Gateway, SourceConfig};
-use std::path::PathBuf;
+use crate::project::Project;
+use crate::repodata::Repodata;
+use rattler_repodata_gateway::Gateway;
 
-impl Project {
+impl Repodata for Project {
     /// Returns the [`Gateway`] used by this project.
-    pub fn repodata_gateway(&self) -> &Gateway {
+    fn repodata_gateway(&self) -> &Gateway {
         self.repodata_gateway.get_or_init(|| {
-            // Determine the cache directory and fall back to sane defaults otherwise.
-            let cache_dir = config::get_cache_dir().unwrap_or_else(|e| {
-                tracing::error!("failed to determine repodata cache directory: {e}");
-                std::env::current_dir().unwrap_or_else(|_| PathBuf::from("./"))
-            });
-
-            // Construct the gateway
-            Gateway::builder()
-                .with_client(self.authenticated_client().clone())
-                .with_cache_dir(cache_dir.join("repodata"))
-                .with_channel_config(ChannelConfig::from(&self.config))
-                .finish()
+            Self::repodata_gateway_init(
+                self.authenticated_client().clone(),
+                self.config().clone().into(),
+                self.config().max_concurrent_downloads(),
+            )
         })
-    }
-}
-
-impl<'c> From<&'c Config> for ChannelConfig {
-    fn from(config: &'c Config) -> Self {
-        let default_source_config = config
-            .repodata_config
-            .as_ref()
-            .map(|config| SourceConfig {
-                jlap_enabled: !config.disable_jlap.unwrap_or(false),
-                zstd_enabled: !config.disable_zstd.unwrap_or(false),
-                bz2_enabled: !config.disable_bzip2.unwrap_or(false),
-                cache_action: Default::default(),
-            })
-            .unwrap_or_default();
-
-        Self {
-            default: default_source_config,
-            per_channel: Default::default(),
-        }
     }
 }

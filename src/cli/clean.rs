@@ -1,13 +1,19 @@
+use crate::Project;
 /// Command to clean the parts of your system which are touched by pixi.
-use crate::{config, consts, EnvironmentName, Project};
+use pixi_config;
+use pixi_consts::consts;
+use pixi_manifest::EnvironmentName;
 use std::path::PathBuf;
-use std::str::FromStr;
 use std::time::Duration;
 
-use crate::progress::{global_multi_progress, long_running_progress_style};
+use crate::cli::cli_config::ProjectConfig;
 use clap::Parser;
+use fancy_display::FancyDisplay;
+use fs_err::tokio as tokio_fs;
 use indicatif::ProgressBar;
 use miette::IntoDiagnostic;
+use pixi_progress::{global_multi_progress, long_running_progress_style};
+use std::str::FromStr;
 
 #[derive(Parser, Debug)]
 #[clap(group(clap::ArgGroup::new("command")))]
@@ -21,15 +27,19 @@ pub enum Command {
 /// Use the `cache` subcommand to clean the cache.
 #[derive(Parser, Debug)]
 pub struct Args {
+    #[clap(flatten)]
+    pub project_config: ProjectConfig,
+
     #[command(subcommand)]
     command: Option<Command>,
-    /// The path to 'pixi.toml' or 'pyproject.toml'
-    #[arg(long)]
-    pub manifest_path: Option<PathBuf>,
 
     /// The environment directory to remove.
     #[arg(long, short, conflicts_with = "command")]
     pub environment: Option<String>,
+
+    /// Only remove the activation cache
+    #[arg(long)]
+    pub activation_cache: bool,
 }
 
 /// Clean the cache of your system which are touched by pixi.
@@ -43,9 +53,25 @@ pub struct CacheArgs {
     #[arg(long)]
     pub conda: bool,
 
-    /// Answer yes to all questions.
+    /// Clean only the mapping cache.
     #[arg(long)]
-    pub yes: bool,
+    pub mapping: bool,
+
+    /// Clean only `exec` cache
+    #[arg(long)]
+    pub exec: bool,
+
+    /// Clean only the repodata cache.
+    #[arg(long)]
+    pub repodata: bool,
+
+    /// Clean only the build backend tools cache.
+    #[arg(long)]
+    pub tool: bool,
+
+    /// Answer yes to all questions.
+    #[clap(short = 'y', long = "yes", alias = "assume-yes")]
+    assume_yes: bool,
     // TODO: Would be amazing to have a --unused flag to clean only the unused cache.
     //       By searching the inode count of the packages and removing based on that.
     // #[arg(long)]
@@ -56,7 +82,8 @@ pub async fn execute(args: Args) -> miette::Result<()> {
     match args.command {
         Some(Command::Cache(args)) => clean_cache(args).await?,
         None => {
-            let project = Project::load_or_else_discover(args.manifest_path.as_deref())?; // Extract the passed in environment name.
+            let project =
+                Project::load_or_else_discover(args.project_config.manifest_path.as_deref())?; // Extract the passed in environment name.
 
             let explicit_environment = args
                 .environment
@@ -76,8 +103,17 @@ pub async fn execute(args: Args) -> miette::Result<()> {
                 .transpose()?;
 
             if let Some(explicit_env) = explicit_environment {
-                remove_folder_with_progress(explicit_env.dir(), true).await?;
-                tracing::info!("Skipping removal of task cache and solve group environments for explicit environment '{:?}'", explicit_env.name());
+                if args.activation_cache {
+                    remove_file(explicit_env.activation_cache_file_path(), false).await?;
+                    tracing::info!(
+                        "Only removing activation cache for explicit environment '{}'",
+                        explicit_env.name().fancy_display()
+                    );
+                } else {
+                    remove_folder_with_progress(explicit_env.dir(), true).await?;
+                    remove_file(explicit_env.activation_cache_file_path(), false).await?;
+                    tracing::info!("Skipping removal of task cache and solve group environments for explicit environment '{}'", explicit_env.name().fancy_display());
+                }
             } else {
                 // Remove all pixi related work from the project.
                 if !project.environments_dir().starts_with(project.pixi_dir())
@@ -89,14 +125,14 @@ pub async fn execute(args: Args) -> miette::Result<()> {
                         false,
                     )
                     .await?;
-                    remove_folder_with_progress(project.task_cache_folder(), false).await?;
                 }
                 remove_folder_with_progress(project.environments_dir(), true).await?;
                 remove_folder_with_progress(project.solve_group_environments_dir(), false).await?;
                 remove_folder_with_progress(project.task_cache_folder(), false).await?;
+                remove_folder_with_progress(project.activation_env_cache_folder(), false).await?;
             }
 
-            Project::warn_on_discovered_from_env(args.manifest_path.as_deref())
+            Project::warn_on_discovered_from_env(args.project_config.manifest_path.as_deref())
         }
     }
     Ok(())
@@ -104,16 +140,31 @@ pub async fn execute(args: Args) -> miette::Result<()> {
 
 /// Clean the pixi cache folders.
 async fn clean_cache(args: CacheArgs) -> miette::Result<()> {
-    let cache_dir = config::get_cache_dir()?;
+    let cache_dir = pixi_config::get_cache_dir()?;
     let mut dirs = vec![];
 
     if args.pypi {
         dirs.push(cache_dir.join(consts::PYPI_CACHE_DIR));
     }
     if args.conda {
-        dirs.push(cache_dir.join("pkgs"));
+        dirs.push(cache_dir.join(consts::CONDA_PACKAGE_CACHE_DIR));
     }
-    if dirs.is_empty() && (args.yes || dialoguer::Confirm::new()
+    if args.repodata {
+        dirs.push(cache_dir.join(consts::CONDA_REPODATA_CACHE_DIR));
+    }
+    if args.mapping {
+        dirs.push(cache_dir.join(consts::CONDA_PYPI_MAPPING_CACHE_DIR));
+    }
+    if args.exec {
+        dirs.push(cache_dir.join(consts::CACHED_ENVS_DIR));
+    }
+    if args.tool {
+        dirs.push(cache_dir.join(consts::CACHED_BUILD_TOOL_ENVS_DIR));
+        // TODO: Let's clean deprecated cache directory.
+        // This will be removed in a future release.
+        dirs.push(cache_dir.join(consts::_CACHED_BUILD_ENVS_DIR));
+    }
+    if dirs.is_empty() && (args.assume_yes || dialoguer::Confirm::new()
                 .with_prompt("No cache types specified using the flags.\nDo you really want to remove all cache directories from your machine?")
                 .interact_opt()
                 .into_diagnostic()?
@@ -156,7 +207,7 @@ async fn remove_folder_with_progress(
     ));
 
     // Ignore errors
-    let result = tokio::fs::remove_dir_all(&folder).await;
+    let result = tokio_fs::remove_dir_all(&folder).await;
     if let Err(e) = result {
         tracing::info!("Failed to remove folder {:?}: {}", folder, e);
     }
@@ -166,5 +217,26 @@ async fn remove_folder_with_progress(
         console::style("removed").green(),
         folder.display()
     ));
+    Ok(())
+}
+
+async fn remove_file(file: PathBuf, warning_non_existent: bool) -> miette::Result<()> {
+    if !file.exists() {
+        if warning_non_existent {
+            eprintln!(
+                "{}",
+                console::style(format!("File {:?} was not found.", &file)).yellow()
+            );
+        }
+        return Ok(());
+    }
+
+    // Ignore errors
+    let result = tokio_fs::remove_file(&file).await;
+    if let Err(e) = result {
+        tracing::info!("Failed to remove file {:?}: {}", file, e);
+    } else {
+        eprintln!("{} {}", console::style("removed").green(), file.display());
+    }
     Ok(())
 }

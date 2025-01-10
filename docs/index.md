@@ -22,7 +22,7 @@ To install `pixi` you can run the following command in your terminal:
     The above invocation will automatically download the latest version of `pixi`, extract it, and move the `pixi` binary to `~/.pixi/bin`.
     If this directory does not already exist, the script will create it.
 
-    The script will also update your `~/.bash_profile` to include `~/.pixi/bin` in your PATH, allowing you to invoke the `pixi` command from anywhere.
+    The script will also update your `~/.bashrc` to include `~/.pixi/bin` in your PATH, allowing you to invoke the `pixi` command from anywhere.
 
 === "Windows"
     `PowerShell`:
@@ -53,54 +53,60 @@ Afterwards, restart the shell or source the shell config file.
 
 ### Bash (default on most Linux systems)
 
-```bash
-echo 'eval "$(pixi completion --shell bash)"' >> ~/.bashrc
+Add the following to the end of `~/.bashrc`:
+
+```bash title="~/.bashrc"
+
+eval "$(pixi completion --shell bash)"
 ```
 ### Zsh (default on macOS)
 
-```zsh
-echo 'eval "$(pixi completion --shell zsh)"' >> ~/.zshrc
+Add the following to the end of `~/.zshrc`:
+
+
+```zsh title="~/.zshrc"
+
+eval "$(pixi completion --shell zsh)"
 ```
 
 ### PowerShell (pre-installed on all Windows systems)
 
+Add the following to the end of `Microsoft.PowerShell_profile.ps1`.
+You can check the location of this file by querying the `$PROFILE` variable in PowerShell.
+Typically the path is `~\Documents\PowerShell\Microsoft.PowerShell_profile.ps1` or
+`~/.config/powershell/Microsoft.PowerShell_profile.ps1` on -Nix.
+
 ```pwsh
-Add-Content -Path $PROFILE -Value '(& pixi completion --shell powershell) | Out-String | Invoke-Expression'
+(& pixi completion --shell powershell) | Out-String | Invoke-Expression
 ```
-
-!!! tip "Failure because no profile file exists"
-    Make sure your profile file exists, otherwise create it with:
-    ```PowerShell
-    New-Item -Path $PROFILE -ItemType File -Force
-    ```
-
 
 ### Fish
 
-```fish
-echo 'pixi completion --shell fish | source' >> ~/.config/fish/config.fish
+Add the following to the end of `~/.config/fish/config.fish`:
+
+```fish title="~/.config/fish/config.fish"
+
+pixi completion --shell fish | source
 ```
 
 ### Nushell
 
-Add the following to the end of your Nushell env file (find it by running `$nu.env-path` in Nushell):
+Add the following to your Nushell config file (find it by running `$nu.config-path` in Nushell):
 
 ```nushell
-mkdir ~/.cache/pixi
-pixi completion --shell nushell | save -f ~/.cache/pixi/completions.nu
-```
-
-And add the following to the end of your Nushell configuration (find it by running `$nu.config-path`):
-
-```nushell
-use ~/.cache/pixi/completions.nu *
+mkdir $"($nu.data-dir)/vendor/autoload"
+pixi completion --shell nushell | save --force $"($nu.data-dir)/vendor/autoload/pixi-completions.nu"
 ```
 
 ### Elvish
 
-```elv
-echo 'eval (pixi completion --shell elvish | slurp)' >> ~/.elvish/rc.elv
+Add the following to the end of `~/.elvish/rc.elv`:
+
+```elv title="~/.elvish/rc.elv"
+
+eval (pixi completion --shell elvish | slurp)
 ```
+
 
 ## Alternative installation methods
 
@@ -149,7 +155,7 @@ its [compile steps](https://github.com/mamba-org/rattler/tree/main#give-it-a-try
 
     | Variable             | Description                                                                        | Default Value         |
     |----------------------|------------------------------------------------------------------------------------|-----------------------|
-    | `VERSION`            | The version of pixi getting installed, can be used to up- or down-grade.           | `latest`              |
+    | `PIXI_VERSION`       | The version of pixi getting installed, can be used to up- or down-grade.           | `latest`              |
     | `PIXI_HOME`          | The location of the binary folder.                                                 | `$HOME/.pixi`         |
     | `PIXI_ARCH`          | The architecture the pixi version was built for.                                   | `uname -m`            |
     | `PIXI_NO_PATH_UPDATE`| If set the `$PATH` will not be updated to add `pixi` to it.                        |                       |
@@ -157,11 +163,11 @@ its [compile steps](https://github.com/mamba-org/rattler/tree/main#give-it-a-try
 
     For example, on Apple Silicon, you can force the installation of the x86 version:
     ```shell
-    PIXI_ARCH=x86_64 curl -fsSL https://pixi.sh/install.sh | bash
+    curl -fsSL https://pixi.sh/install.sh | PIXI_ARCH=x86_64 bash
     ```
     Or set the version
     ```shell
-    PIXI_VERSION=v0.18.0 curl -fsSL https://pixi.sh/install.sh | bash
+    curl -fsSL https://pixi.sh/install.sh | PIXI_VERSION=v0.18.0 bash
     ```
 
 === "Windows"
@@ -192,8 +198,8 @@ pixi self-update --version x.y.z
 ```
 
 !!! note
-    If you've used a package manager like `brew`, `mamba`, `conda`, `paru` etc. to install `pixi`.
-    It's preferable to use the built-in update mechanism. e.g. `brew upgrade pixi`.
+    If you've used a package manager like `brew`, `mamba`, `conda`, `paru` etc. to install `pixi`
+    you must use the built-in update mechanism. e.g. `brew upgrade pixi`.
 
 ## Uninstall
 

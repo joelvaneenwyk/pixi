@@ -85,8 +85,8 @@ pixi global install fish
 # Install other prefix.dev tools
 pixi global install rattler-build
 
-# Install a linter you want to use in multiple projects.
-pixi global install ruff
+# Install a multi package environment
+pixi global install --environment data-science-env --expose python --expose jupyter python jupyter numpy pandas
 ```
 
 ## Use pixi in GitHub Actions

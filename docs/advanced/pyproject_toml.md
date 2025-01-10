@@ -13,7 +13,7 @@ When you already have a `pyproject.toml` file in your project, you can run `pixi
 - Add the current project as an editable pypi dependency;
 - Add some defaults to the `.gitignore` and `.gitattributes` files.
 
-If you do not have an existing `pyproject.toml` file , you can run `pixi init --pyproject` in your project folder. In that case, pixi will create a `pyproject.toml` manifest from scratch with some sane defaults.
+If you do not have an existing `pyproject.toml` file , you can run `pixi init --format pyproject` in your project folder. In that case, pixi will create a `pyproject.toml` manifest from scratch with some sane defaults.
 
 ## Python dependency
 
@@ -110,7 +110,7 @@ As pixi takes the conda dependencies over the pypi dependencies.
 
 ## Optional dependencies
 
-If your python project includes groups of optional dependencies, pixi will automatically interpret them as [pixi features](../reference/project_configuration.md#the-feature-table) of the same name with the associated `pypi-dependencies`.
+If your python project includes groups of optional dependencies, pixi will automatically interpret them as [pixi features](../reference/pixi_manifest.md#the-feature-table) of the same name with the associated `pypi-dependencies`.
 
 You can add them to pixi environments manually, or use `pixi init` to setup the project, which will create one environment per feature. Self-references to other groups of optional dependencies are also handled.
 
@@ -152,6 +152,57 @@ In this example, three environments will be created by pixi:
 - **default** with 'package1' as pypi dependency
 - **test** with 'package1' and 'pytest' as pypi dependencies
 - **all** with 'package1', 'package2' and 'pytest' as pypi dependencies
+
+All environments will be solved together, as indicated by the common `solve-group`, and added to the lock file. You can edit the `[tool.pixi.environments]` section manually to adapt it to your use case (e.g. if you do not need a particular environment).
+
+## Dependency groups
+
+If your python project includes dependency groups, pixi will automatically interpret them as [pixi features](../reference/pixi_manifest.md#the-feature-table) of the same name with the associated `pypi-dependencies`.
+
+You can add them to pixi environments manually, or use `pixi init` to setup the project, which will create one environment per dependency group.
+
+For instance, imagine you have a project folder with a `pyproject.toml` file similar to:
+
+```toml
+[project]
+name = "my_project"
+dependencies = ["package1"]
+
+[dependency-groups]
+test = ["pytest"]
+docs = ["sphinx"]
+dev = [{include-group = "test"}, {include-group = "docs"}]
+```
+
+Running `pixi init` in that project folder will transform the `pyproject.toml` file into:
+
+```toml
+[project]
+name = "my_project"
+dependencies = ["package1"]
+
+[dependency-groups]
+test = ["pytest"]
+docs = ["sphinx"]
+dev = [{include-group = "test"}, {include-group = "docs"}]
+
+[tool.pixi.project]
+channels = ["conda-forge"]
+platforms = ["linux-64"] # if executed on linux
+
+[tool.pixi.environments]
+default = {features = [], solve-group = "default"}
+test = {features = ["test"], solve-group = "default"}
+docs = {features = ["docs"], solve-group = "default"}
+dev = {features = ["dev"], solve-group = "default"}
+```
+
+In this example, four environments will be created by pixi:
+
+- **default** with 'package1' as pypi dependency
+- **test** with 'package1' and 'pytest' as pypi dependencies
+- **docs** with 'package1', 'sphinx' as pypi dependencies
+- **dev** with 'package1', 'sphinx' and 'pytest' as pypi dependencies
 
 All environments will be solved together, as indicated by the common `solve-group`, and added to the lock file. You can edit the `[tool.pixi.environments]` section manually to adapt it to your use case (e.g. if you do not need a particular environment).
 
@@ -207,10 +258,12 @@ requires = ["setuptools >= 40.8.0"]
 build-backend = "setuptools.build_meta:__legacy__"
 ```
 
-Including a `[build-system]` section is **highly recommended**. If you are not sure of the [build-backend](https://packaging.python.org/en/latest/tutorials/packaging-projects/#choosing-build-backend) you want to use, including the `[build-system]` section below in your `pyproject.toml` is a good starting point
+Including a `[build-system]` section is **highly recommended**. If you are not sure of the [build-backend](https://packaging.python.org/en/latest/tutorials/packaging-projects/#choosing-build-backend) you want to use, including the `[build-system]` section below in your `pyproject.toml` is a good starting point.
+`pixi init --format pyproject` defaults to `hatchling`.
+The advantages of `hatchling` over `setuptools` are outlined on its [website](https://hatch.pypa.io/latest/why/#build-backend).
 
 ```toml title="pyproject.toml"
 [build-system]
-requires = ["setuptools"]
-build-backend = "setuptools.build_meta"
+build-backend = "hatchling.build"
+requires = ["hatchling"]
 ```

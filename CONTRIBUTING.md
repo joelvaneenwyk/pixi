@@ -49,11 +49,27 @@ By contributing to Pixi, you agree that your contributions will be licensed unde
 
 ## Pixi is a pixi project so use a preinstalled `pixi` to run the predefined tasks
 ```shell
-pixi run build
+pixi run build-debug # or `pixi run build-release` to build with optimizations
 pixi run lint
-pixi run test
-pixi run test-all
+pixi run test-all-fast
 pixi run install # only works on unix systems as on windows you can't overwrite the binary while it's running
+```
+
+### Installing the target binaries to a custom location
+
+Use the pixi task `install-as` which invokes a python script to build the project and copy the executable to a custom location.
+```shell
+$ pixi run install-as
+usage: install.py [-h] [--dest DEST] name
+
+Build pixi and copy the executable to ~/.pixi/bin or a custom destination
+
+positional arguments:
+  name                  Name of the executable (e.g. pixid)
+
+options:
+  -h, --help            show this help message and exit
+  --dest DEST           Destination directory for the executable, default: $PIXI_HOME/bin (or ~/.pixi/bin if $PIXI_HOME isn't set)
 ```
 
 ## Get your code ready for a PR

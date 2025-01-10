@@ -1,26 +1,35 @@
-use std::{fmt::Display, fs, path::PathBuf};
+use std::{fmt::Display, path::PathBuf};
 
+use crate::cli::cli_config::ProjectConfig;
 use chrono::{DateTime, Local};
 use clap::Parser;
 use itertools::Itertools;
 use miette::IntoDiagnostic;
+use pixi_config;
+use pixi_consts::consts;
+use pixi_manifest::{EnvironmentName, FeatureName, SystemRequirements};
+use pixi_manifest::{FeaturesExt, HasFeaturesIter};
+use pixi_progress::await_in_progress;
 use rattler_conda_types::{GenericVirtualPackage, Platform};
 use rattler_networking::authentication_storage;
-use rattler_virtual_packages::VirtualPackage;
+use rattler_virtual_packages::{VirtualPackage, VirtualPackageOverrides};
 use serde::Serialize;
-use serde_with::serde_as;
-use serde_with::DisplayFromStr;
+use serde_with::{serde_as, DisplayFromStr};
 use tokio::task::spawn_blocking;
+use toml_edit::ser::to_string;
 
-use crate::progress::await_in_progress;
-use crate::project::has_features::HasFeatures;
-use crate::task::TaskName;
-use crate::util::default_channel_config;
-use crate::{config, consts, EnvironmentName, FeatureName, Project};
+use crate::{
+    global,
+    global::{BinDir, EnvRoot},
+    task::TaskName,
+    Project,
+};
+use fancy_display::FancyDisplay;
 
-static WIDTH: usize = 18;
+static WIDTH: usize = 19;
 
-/// Information about the system, project and environments for the current machine.
+/// Information about the system, project and environments for the current
+/// machine.
 #[derive(Parser, Debug)]
 pub struct Args {
     /// Show cache and environment size
@@ -31,9 +40,8 @@ pub struct Args {
     #[arg(long)]
     json: bool,
 
-    /// The path to 'pixi.toml' or 'pyproject.toml'
-    #[arg(long)]
-    pub manifest_path: Option<PathBuf>,
+    #[clap(flatten)]
+    pub project_config: ProjectConfig,
 }
 
 #[derive(Serialize)]
@@ -43,7 +51,6 @@ pub struct ProjectInfo {
     last_updated: Option<String>,
     pixi_folder_size: Option<String>,
     version: Option<String>,
-    configuration: Vec<PathBuf>,
 }
 
 #[derive(Serialize)]
@@ -58,6 +65,7 @@ pub struct EnvironmentInfo {
     tasks: Vec<TaskName>,
     channels: Vec<String>,
     prefix: PathBuf,
+    system_requirements: SystemRequirements,
 }
 
 impl Display for EnvironmentInfo {
@@ -138,6 +146,27 @@ impl Display for EnvironmentInfo {
                 platform_list
             )?;
         }
+
+        if !self.system_requirements.is_empty() {
+            let serialized = to_string(&self.system_requirements).unwrap();
+            let indented = serialized
+                .lines()
+                .enumerate()
+                .map(|(i, line)| {
+                    if i == 0 {
+                        // First line includes the label
+                        format!("{:>WIDTH$}: {}", bold.apply_to("System requirements"), line)
+                    } else {
+                        // Subsequent lines are indented to align
+                        format!("{:>WIDTH$}  {}", "", line)
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join("\n");
+
+            writeln!(f, "{}", indented)?;
+        }
+
         if !self.tasks.is_empty() {
             let tasks_list = self
                 .tasks
@@ -156,6 +185,38 @@ impl Display for EnvironmentInfo {
     }
 }
 
+/// Information about `pixi global`
+#[derive(Serialize)]
+struct GlobalInfo {
+    bin_dir: PathBuf,
+    env_dir: PathBuf,
+    manifest: PathBuf,
+}
+impl Display for GlobalInfo {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let bold = console::Style::new().bold();
+        writeln!(
+            f,
+            "{:>WIDTH$}: {}",
+            bold.apply_to("Bin dir"),
+            self.bin_dir.to_string_lossy()
+        )?;
+        writeln!(
+            f,
+            "{:>WIDTH$}: {}",
+            bold.apply_to("Environment dir"),
+            self.env_dir.to_string_lossy()
+        )?;
+        writeln!(
+            f,
+            "{:>WIDTH$}: {}",
+            bold.apply_to("Manifest dir"),
+            self.manifest.to_string_lossy()
+        )?;
+        Ok(())
+    }
+}
+
 #[serde_as]
 #[derive(Serialize)]
 pub struct Info {
@@ -166,8 +227,10 @@ pub struct Info {
     cache_dir: Option<PathBuf>,
     cache_size: Option<String>,
     auth_dir: PathBuf,
+    global_info: Option<GlobalInfo>,
     project_info: Option<ProjectInfo>,
     environments_info: Vec<EnvironmentInfo>,
+    config_locations: Vec<PathBuf>,
 }
 impl Display for Info {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -177,6 +240,7 @@ impl Display for Info {
             None => "None".to_string(),
         };
 
+        writeln!(f, "{}", bold.apply_to("System\n------------").cyan())?;
         writeln!(
             f,
             "{:>WIDTH$}: {}",
@@ -210,8 +274,32 @@ impl Display for Info {
             self.auth_dir.to_string_lossy()
         )?;
 
+        let config_locations = self
+            .config_locations
+            .iter()
+            .map(|p| p.to_string_lossy())
+            .join(" ");
+
+        writeln!(
+            f,
+            "{:>WIDTH$}: {}",
+            bold.apply_to("Config locations"),
+            if config_locations.is_empty() {
+                "No config files found"
+            } else {
+                &config_locations
+            }
+        )?;
+
+        // Pixi global information
+        if let Some(gi) = self.global_info.as_ref() {
+            writeln!(f, "\n{}", bold.apply_to("Global\n------------").cyan())?;
+            write!(f, "{}", gi)?;
+        }
+
+        // Project information
         if let Some(pi) = self.project_info.as_ref() {
-            writeln!(f, "\n{}", bold.apply_to("Project\n------------"))?;
+            writeln!(f, "\n{}", bold.apply_to("Project\n------------").cyan())?;
             writeln!(f, "{:>WIDTH$}: {}", bold.apply_to("Name"), pi.name)?;
             if let Some(version) = pi.version.clone() {
                 writeln!(f, "{:>WIDTH$}: {}", bold.apply_to("Version"), version)?;
@@ -221,19 +309,6 @@ impl Display for Info {
                 "{:>WIDTH$}: {}",
                 bold.apply_to("Manifest file"),
                 pi.manifest_path.to_string_lossy()
-            )?;
-
-            let config_locations = pi
-                .configuration
-                .iter()
-                .map(|p| p.to_string_lossy())
-                .join(", ");
-
-            writeln!(
-                f,
-                "{:>WIDTH$}: {}",
-                bold.apply_to("Config locations"),
-                config_locations
             )?;
 
             if let Some(update_time) = &pi.last_updated {
@@ -247,7 +322,11 @@ impl Display for Info {
         }
 
         if !self.environments_info.is_empty() {
-            writeln!(f, "\n{}", bold.apply_to("Environments\n------------"))?;
+            writeln!(
+                f,
+                "\n{}",
+                bold.apply_to("Environments\n------------").cyan()
+            )?;
             for e in &self.environments_info {
                 writeln!(f, "{}", e)?;
             }
@@ -259,24 +338,26 @@ impl Display for Info {
 
 /// Returns the size of a directory
 fn dir_size(path: impl Into<PathBuf>) -> miette::Result<String> {
-    fn dir_size(mut dir: fs::ReadDir) -> miette::Result<u64> {
+    fn dir_size(mut dir: fs_err::ReadDir) -> miette::Result<u64> {
         dir.try_fold(0, |acc, file| {
             let file = file.into_diagnostic()?;
             let size = match file.metadata().into_diagnostic()? {
-                data if data.is_dir() => dir_size(fs::read_dir(file.path()).into_diagnostic()?)?,
+                data if data.is_dir() => {
+                    dir_size(fs_err::read_dir(file.path()).into_diagnostic()?)?
+                }
                 data => data.len(),
             };
             Ok(acc + size)
         })
     }
 
-    let size = dir_size(fs::read_dir(path.into()).into_diagnostic()?)?;
+    let size = dir_size(fs_err::read_dir(path.into()).into_diagnostic()?)?;
     Ok(format!("{} MiB", size / 1024 / 1024))
 }
 
 /// Returns last update time of file, formatted: DD-MM-YYYY H:M:S
 fn last_updated(path: impl Into<PathBuf>) -> miette::Result<String> {
-    let time = fs::metadata(path.into())
+    let time = fs_err::metadata(path.into())
         .into_diagnostic()?
         .modified()
         .into_diagnostic()?;
@@ -288,11 +369,11 @@ fn last_updated(path: impl Into<PathBuf>) -> miette::Result<String> {
 }
 
 pub async fn execute(args: Args) -> miette::Result<()> {
-    let project = Project::load_or_else_discover(args.manifest_path.as_deref()).ok();
+    let project = Project::load_or_else_discover(args.project_config.manifest_path.as_deref()).ok();
 
     let (pixi_folder_size, cache_size) = if args.extended {
         let env_dir = project.as_ref().map(|p| p.pixi_dir());
-        let cache_dir = config::get_cache_dir()?;
+        let cache_dir = pixi_config::get_cache_dir()?;
         await_in_progress("fetching directory sizes", |_| {
             spawn_blocking(move || {
                 let env_size = env_dir.and_then(|env| dir_size(env).ok());
@@ -311,7 +392,6 @@ pub async fn execute(args: Args) -> miette::Result<()> {
         manifest_path: p.manifest_path(),
         last_updated: last_updated(p.lock_file_path()).ok(),
         pixi_folder_size,
-        configuration: p.config().loaded_from.clone(),
         version: p.version().clone().map(|v| v.to_string()),
     });
 
@@ -335,7 +415,7 @@ pub async fn execute(args: Args) -> miette::Result<()> {
                             .map(|solve_group| solve_group.name().to_string()),
                         environment_size: None,
                         dependencies: env
-                            .dependencies(None, Some(env.best_platform()))
+                            .combined_dependencies(Some(env.best_platform()))
                             .names()
                             .map(|p| p.as_source().to_string())
                             .collect(),
@@ -345,15 +425,8 @@ pub async fn execute(args: Args) -> miette::Result<()> {
                             .map(|(name, _p)| name.as_source().to_string())
                             .collect(),
                         platforms: env.platforms().into_iter().collect(),
-                        channels: env
-                            .channels()
-                            .into_iter()
-                            .map(|c| {
-                                default_channel_config()
-                                    .canonical_name(c.base_url())
-                                    .to_string()
-                            })
-                            .collect(),
+                        system_requirements: env.system_requirements().clone(),
+                        channels: env.channels().into_iter().map(|c| c.to_string()).collect(),
                         prefix: env.dir(),
                         tasks,
                     }
@@ -362,7 +435,13 @@ pub async fn execute(args: Args) -> miette::Result<()> {
         })
         .unwrap_or_default();
 
-    let virtual_packages = VirtualPackage::current()
+    let global_info = Some(GlobalInfo {
+        bin_dir: BinDir::from_env().await?.path().to_path_buf(),
+        env_dir: EnvRoot::from_env().await?.path().to_path_buf(),
+        manifest: global::Project::manifest_dir()?.join(consts::GLOBAL_MANIFEST_DEFAULT_NAME),
+    });
+
+    let virtual_packages = VirtualPackage::detect(&VirtualPackageOverrides::from_env())
         .into_diagnostic()?
         .iter()
         .cloned()
@@ -371,7 +450,7 @@ pub async fn execute(args: Args) -> miette::Result<()> {
 
     let config = project
         .map(|p| p.config().clone())
-        .unwrap_or_else(config::Config::load_global);
+        .unwrap_or_else(pixi_config::Config::load_global);
 
     let auth_file = config
         .authentication_override_file()
@@ -386,22 +465,24 @@ pub async fn execute(args: Args) -> miette::Result<()> {
         platform: Platform::current().to_string(),
         virtual_packages,
         version: consts::PIXI_VERSION.to_string(),
-        cache_dir: Some(config::get_cache_dir()?),
+        cache_dir: Some(pixi_config::get_cache_dir()?),
         cache_size,
         auth_dir: auth_file,
         project_info,
         environments_info,
+        global_info,
+        config_locations: config.loaded_from.clone(),
     };
 
     if args.json {
         println!("{}", serde_json::to_string_pretty(&info).into_diagnostic()?);
 
-        Project::warn_on_discovered_from_env(args.manifest_path.as_deref());
+        Project::warn_on_discovered_from_env(args.project_config.manifest_path.as_deref());
         Ok(())
     } else {
         println!("{}", info);
 
-        Project::warn_on_discovered_from_env(args.manifest_path.as_deref());
+        Project::warn_on_discovered_from_env(args.project_config.manifest_path.as_deref());
         Ok(())
     }
 }

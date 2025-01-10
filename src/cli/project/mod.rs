@@ -1,11 +1,13 @@
-use std::path::PathBuf;
-
+use crate::cli::cli_config::ProjectConfig;
 use clap::Parser;
 
 pub mod channel;
 pub mod description;
 pub mod environment;
+pub mod export;
+pub mod name;
 pub mod platform;
+pub mod system_requirements;
 pub mod version;
 
 #[derive(Debug, Parser)]
@@ -15,6 +17,9 @@ pub enum Command {
     Platform(platform::Args),
     Version(version::Args),
     Environment(environment::Args),
+    Export(export::Args),
+    Name(name::Args),
+    SystemRequirements(system_requirements::Args),
 }
 
 /// Modify the project configuration file through the command line.
@@ -22,9 +27,9 @@ pub enum Command {
 pub struct Args {
     #[command(subcommand)]
     command: Command,
-    /// The path to 'pixi.toml' or 'pyproject.toml'
-    #[arg(long)]
-    pub manifest_path: Option<PathBuf>,
+
+    #[clap(flatten)]
+    pub project_config: ProjectConfig,
 }
 
 pub async fn execute(cmd: Args) -> miette::Result<()> {
@@ -34,6 +39,9 @@ pub async fn execute(cmd: Args) -> miette::Result<()> {
         Command::Platform(args) => platform::execute(args).await?,
         Command::Version(args) => version::execute(args).await?,
         Command::Environment(args) => environment::execute(args).await?,
+        Command::Export(cmd) => export::execute(cmd).await?,
+        Command::Name(args) => name::execute(args).await?,
+        Command::SystemRequirements(args) => system_requirements::execute(args).await?,
     };
     Ok(())
 }

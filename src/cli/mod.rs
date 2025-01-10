@@ -1,22 +1,23 @@
-use std::{env, io::IsTerminal};
-
 use clap::Parser;
 use clap_verbosity_flag::Verbosity;
 use indicatif::ProgressDrawTarget;
 use miette::IntoDiagnostic;
+use pixi_consts::consts;
+use pixi_progress::global_multi_progress;
+use pixi_utils::indicatif::IndicatifWriter;
+use std::{env, io::IsTerminal};
 use tracing_subscriber::{
     filter::LevelFilter, prelude::__tracing_subscriber_SubscriberExt, util::SubscriberInitExt,
     EnvFilter,
 };
 
-use super::util::IndicatifWriter;
-use crate::{progress, progress::global_multi_progress};
-
 pub mod add;
+mod build;
 pub mod clean;
+pub mod cli_config;
 pub mod completion;
 pub mod config;
-mod exec;
+pub mod exec;
 pub mod global;
 pub mod has_specs;
 pub mod info;
@@ -33,13 +34,14 @@ pub mod shell_hook;
 pub mod task;
 pub mod tree;
 pub mod update;
+pub mod upgrade;
 pub mod upload;
 
 #[derive(Parser, Debug)]
 #[command(
-    version,
-    about = "
-Pixi [version 0.26.1] - Developer Workflow and Environment Management for Multi-Platform, Language-Agnostic Projects.
+    version(consts::PIXI_VERSION),
+    about = format!("
+Pixi [version {}] - Developer Workflow and Environment Management for Multi-Platform, Language-Agnostic Projects.
 
 Pixi is a versatile developer workflow tool designed to streamline the management of your project's dependencies, tasks, and environments.
 Built on top of the Conda ecosystem, Pixi offers seamless integration with the PyPI ecosystem.
@@ -50,7 +52,7 @@ Basic Usage:
     $ pixi add python numpy pytest
 
     Run a task:
-    $ pixi add task test 'pytest -s'
+    $ pixi task add test 'pytest -s'
     $ pixi run test
 
 Found a Bug or Have a Feature Request?
@@ -60,7 +62,7 @@ Need Help?
 Ask a question on the Prefix Discord server: https://discord.gg/kKV8ZxyzY4
 
 For more information, see the documentation at: https://pixi.sh
-"
+", consts::PIXI_VERSION)
 )]
 #[clap(arg_required_else_help = true)]
 struct Args {
@@ -77,9 +79,19 @@ struct Args {
     #[clap(long, default_value = "auto", global = true, env = "PIXI_COLOR")]
     color: ColorOutput,
 
-    /// Hide all progress bars
+    /// Hide all progress bars, always turned on if stderr is not a terminal.
     #[clap(long, default_value = "false", global = true, env = "PIXI_NO_PROGRESS")]
     no_progress: bool,
+}
+impl Args {
+    /// Whether to show progress bars or not, based on the terminal and the user's preference.
+    fn no_progress(&self) -> bool {
+        if !std::io::stderr().is_terminal() {
+            true
+        } else {
+            self.no_progress
+        }
+    }
 }
 
 #[derive(Parser, Debug)]
@@ -94,6 +106,7 @@ pub enum Command {
     #[clap(visible_alias = "i")]
     Install(install::Args),
     Update(update::Args),
+    Upgrade(upgrade::Args),
 
     #[clap(visible_alias = "r")]
     Run(run::Args),
@@ -121,17 +134,21 @@ pub enum Command {
     Info(info::Args),
     Upload(upload::Args),
     Search(search::Args),
+    #[cfg_attr(not(feature = "self_update"), clap(hide = true))]
     SelfUpdate(self_update::Args),
     Clean(clean::Args),
     Completion(completion::Args),
+
+    // Build
+    Build(build::Args),
 }
 
 #[derive(Parser, Debug, Default, Copy, Clone)]
 #[group(multiple = false)]
 /// Lock file usage from the CLI
 pub struct LockFileUsageArgs {
-    /// Install the environment as defined in the lockfile, doesn't update lockfile if it isn't
-    /// up-to-date with the manifest file.
+    /// Install the environment as defined in the lockfile, doesn't update
+    /// lockfile if it isn't up-to-date with the manifest file.
     #[clap(long, conflicts_with = "locked", env = "PIXI_FROZEN")]
     pub frozen: bool,
     /// Check if lockfile is up-to-date before installing the environment,
@@ -154,7 +171,8 @@ impl From<LockFileUsageArgs> for crate::environment::LockFileUsage {
 
 pub async fn execute() -> miette::Result<()> {
     let args = Args::parse();
-    let use_colors = use_color_output(&args);
+    set_console_colors(&args);
+    let use_colors = console::colors_enabled_stderr();
 
     // Set up the default miette handler based on whether we want colors or not.
     miette::set_hook(Box::new(move |_| {
@@ -165,42 +183,28 @@ pub async fn execute() -> miette::Result<()> {
         )
     }))?;
 
-    // Honor FORCE_COLOR and NO_COLOR environment variables.
-    // Those take precedence over the CLI flag and PIXI_COLOR
-    let use_colors = match env::var("FORCE_COLOR") {
-        Ok(_) => true,
-        Err(_) => match env::var("NO_COLOR") {
-            Ok(_) => false,
-            Err(_) => use_colors,
-        },
-    };
-
-    // Enable disable colors for the colors crate
-    console::set_colors_enabled(use_colors);
-    console::set_colors_enabled_stderr(use_colors);
-
     // Hide all progress bars if the user requested it.
-    if args.no_progress {
+    if args.no_progress() {
         global_multi_progress().set_draw_target(ProgressDrawTarget::hidden());
     }
 
     let (low_level_filter, level_filter, pixi_level) = match args.verbose.log_level_filter() {
-        clap_verbosity_flag::LevelFilter::Off => {
+        clap_verbosity_flag::log::LevelFilter::Off => {
             (LevelFilter::OFF, LevelFilter::OFF, LevelFilter::OFF)
         }
-        clap_verbosity_flag::LevelFilter::Error => {
+        clap_verbosity_flag::log::LevelFilter::Error => {
             (LevelFilter::ERROR, LevelFilter::ERROR, LevelFilter::WARN)
         }
-        clap_verbosity_flag::LevelFilter::Warn => {
+        clap_verbosity_flag::log::LevelFilter::Warn => {
             (LevelFilter::WARN, LevelFilter::WARN, LevelFilter::INFO)
         }
-        clap_verbosity_flag::LevelFilter::Info => {
+        clap_verbosity_flag::log::LevelFilter::Info => {
             (LevelFilter::WARN, LevelFilter::INFO, LevelFilter::INFO)
         }
-        clap_verbosity_flag::LevelFilter::Debug => {
+        clap_verbosity_flag::log::LevelFilter::Debug => {
             (LevelFilter::INFO, LevelFilter::DEBUG, LevelFilter::DEBUG)
         }
-        clap_verbosity_flag::LevelFilter::Trace => {
+        clap_verbosity_flag::log::LevelFilter::Trace => {
             (LevelFilter::TRACE, LevelFilter::TRACE, LevelFilter::TRACE)
         }
     };
@@ -238,25 +242,13 @@ pub async fn execute() -> miette::Result<()> {
     let fmt_layer = tracing_subscriber::fmt::layer()
         .with_ansi(use_colors)
         .with_target(pixi_level >= LevelFilter::INFO)
-        .with_writer(IndicatifWriter::new(progress::global_multi_progress()))
+        .with_writer(IndicatifWriter::new(pixi_progress::global_multi_progress()))
         .without_time();
 
-    cfg_if::cfg_if! {
-        if #[cfg(feature = "console-subscriber")]
-        {
-            let console_layer = console_subscriber::spawn();
-            tracing_subscriber::registry()
-                .with(console_layer)
-                .with(env_filter)
-                .with(fmt_layer)
-                .init();
-        } else {
-            tracing_subscriber::registry()
-            .with(env_filter)
-            .with(fmt_layer)
-            .init();
-        }
-    }
+    tracing_subscriber::registry()
+        .with(env_filter)
+        .with(fmt_layer)
+        .init();
 
     // Execute the command
     execute_command(args.command).await
@@ -282,11 +274,16 @@ pub async fn execute_command(command: Command) -> miette::Result<()> {
         Command::Search(cmd) => search::execute(cmd).await,
         Command::Project(cmd) => project::execute(cmd).await,
         Command::Remove(cmd) => remove::execute(cmd).await,
+        #[cfg(feature = "self_update")]
         Command::SelfUpdate(cmd) => self_update::execute(cmd).await,
+        #[cfg(not(feature = "self_update"))]
+        Command::SelfUpdate(cmd) => self_update::execute_stub(cmd).await,
         Command::List(cmd) => list::execute(cmd).await,
         Command::Tree(cmd) => tree::execute(cmd).await,
         Command::Update(cmd) => update::execute(cmd).await,
+        Command::Upgrade(cmd) => upgrade::execute(cmd).await,
         Command::Exec(args) => exec::execute(args).await,
+        Command::Build(args) => build::execute(args).await,
     }
 }
 
@@ -302,16 +299,26 @@ pub enum ColorOutput {
     Auto,
 }
 
-/// Returns true if the output is considered to be a terminal.
-fn is_terminal() -> bool {
-    std::io::stderr().is_terminal()
-}
+fn set_console_colors(args: &Args) {
+    // Honor FORCE_COLOR and NO_COLOR environment variables.
+    // Those take precedence over the CLI flag and PIXI_COLOR
+    let color = match env::var("FORCE_COLOR") {
+        Ok(_) => &ColorOutput::Always,
+        Err(_) => match env::var("NO_COLOR") {
+            Ok(_) => &ColorOutput::Never,
+            Err(_) => &args.color,
+        },
+    };
 
-/// Returns true if the log outputs should be colored or not.
-fn use_color_output(args: &Args) -> bool {
-    match args.color {
-        ColorOutput::Always => true,
-        ColorOutput::Never => false,
-        ColorOutput::Auto => std::env::var_os("NO_COLOR").is_none() && is_terminal(),
-    }
+    match color {
+        ColorOutput::Always => {
+            console::set_colors_enabled(true);
+            console::set_colors_enabled_stderr(true);
+        }
+        ColorOutput::Never => {
+            console::set_colors_enabled(false);
+            console::set_colors_enabled_stderr(false);
+        }
+        ColorOutput::Auto => {} // Let `console` detect if colors should be enabled
+    };
 }

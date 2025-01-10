@@ -1,40 +1,42 @@
 # The configuration of pixi itself
 
-Apart from the [project specific configuration](../reference/project_configuration.md) pixi supports configuration options which are not required for the project to work but are local to the machine.
+Apart from the [project specific configuration](../reference/pixi_manifest.md) pixi supports configuration options which are not required for the project to work but are local to the machine.
 The configuration is loaded in the following order:
 
 
 === "Linux"
 
-    | **Priority** | **Location**                                                           | **Comments**                                                                       |
-    |--------------|------------------------------------------------------------------------|------------------------------------------------------------------------------------|
-    | 1            | `/etc/pixi/config.toml`                                                | System-wide configuration                                                          |
-    | 2            | `$XDG_CONFIG_HOME/pixi/config.toml`                                    | XDG compliant user-specific configuration                                          |
-    | 3            | `$HOME/.config/pixi/config.toml`                                       | User-specific configuration                                                        |
-    | 4            | `$PIXI_HOME/config.toml`                                               | Global configuration in the user home directory. `PIXI_HOME` defaults to `~/.pixi` |
-    | 5            | `your_project/.pixi/config.toml`                                       | Project-specific configuration                                                     |
-    | 6            | Command line arguments (`--tls-no-verify`, `--change-ps1=false`, etc.) | Configuration via command line arguments                                           |
+    | **Priority** | **Location**                                                           | **Comments**                                          |
+    |--------------|------------------------------------------------------------------------|-------------------------------------------------------|
+    | 7            | Command line arguments (`--tls-no-verify`, `--change-ps1=false`, etc.) | Configuration via command line arguments              |
+    | 6            | `your_project/.pixi/config.toml`                                       | Project-specific configuration                        |
+    | 5            | `$PIXI_HOME/config.toml`                                               | Global configuration in `PIXI_HOME`.                  |
+    | 4            | `$HOME/.pixi/config.toml`                                              | Global configuration in the user home directory.      |
+    | 3            | `$XDG_CONFIG_HOME/pixi/config.toml`                                    | XDG compliant user-specific configuration             |
+    | 2            | `$HOME/.config/pixi/config.toml`                                       | User-specific configuration                           |
+    | 1            | `/etc/pixi/config.toml`                                                | System-wide configuration                             |
 
 === "macOS"
 
-    | **Priority** | **Location**                                                           | **Comments**                                                                       |
-    |--------------|------------------------------------------------------------------------|------------------------------------------------------------------------------------|
-    | 1            | `/etc/pixi/config.toml`                                                | System-wide configuration                                                          |
-    | 2            | `$XDG_CONFIG_HOME/pixi/config.toml`                                    | XDG compliant user-specific configuration                                          |
-    | 3            | `$HOME/Library/Application Support/pixi/config.toml`                   | User-specific configuration                                                        |
-    | 4            | `$PIXI_HOME/config.toml`                                               | Global configuration in the user home directory. `PIXI_HOME` defaults to `~/.pixi` |
-    | 5            | `your_project/.pixi/config.toml`                                       | Project-specific configuration                                                     |
-    | 6            | Command line arguments (`--tls-no-verify`, `--change-ps1=false`, etc.) | Configuration via command line arguments                                           |
+    | **Priority** | **Location**                                                           | **Comments**                                          |
+    |--------------|------------------------------------------------------------------------|-------------------------------------------------------|
+    | 6            | Command line arguments (`--tls-no-verify`, `--change-ps1=false`, etc.) | Configuration via command line arguments              |
+    | 5            | `your_project/.pixi/config.toml`                                       | Project-specific configuration                        |
+    | 4            | `$PIXI_HOME/config.toml`                                               | Global configuration in `PIXI_HOME`.                  |
+    | 3            | `$HOME/.pixi/config.toml`                                              | Global configuration in the user home directory.      |
+    | 2            | `$HOME/Library/Application Support/pixi/config.toml`                   | User-specific configuration                           |
+    | 1            | `/etc/pixi/config.toml`                                                | System-wide configuration                             |
 
 === "Windows"
 
-    | **Priority** | **Location**                                                           | **Comments**                                                                                   |
-    |--------------|------------------------------------------------------------------------|------------------------------------------------------------------------------------------------|
-    | 1            | `C:\ProgramData\pixi\config.toml`                                      | System-wide configuration                                                                      |
-    | 2            | `%APPDATA%\pixi\config.toml`                                           | User-specific configuration                                                                    |
-    | 3            | `$PIXI_HOME\config.toml`                                               | Global configuration in the user home directory. `PIXI_HOME` defaults to `%USERPROFILE%/.pixi` |
-    | 4            | `your_project\.pixi\config.toml`                                       | Project-specific configuration                                                                 |
-    | 5            | Command line arguments (`--tls-no-verify`, `--change-ps1=false`, etc.) | Configuration via command line arguments                                                       |
+    | **Priority** | **Location**                                                           | **Comments**                                          |
+    |--------------|------------------------------------------------------------------------|-------------------------------------------------------|
+    | 6            | Command line arguments (`--tls-no-verify`, `--change-ps1=false`, etc.) | Configuration via command line arguments              |
+    | 5            | `your_project\.pixi\config.toml`                                       | Project-specific configuration                        |
+    | 4            | `%PIXI_HOME%\config.toml`                                              | Global configuration in `PIXI_HOME`.                  |
+    | 3            | `%USERPROFILE%\.pixi\config.toml`                                      | Global configuration in the user home directory.      |
+    | 2            | `%APPDATA%\pixi\config.toml`                                           | User-specific configuration                           |
+    | 1            | `C:\ProgramData\pixi\config.toml`                                      | System-wide configuration                             |
 
 !!! note
     The highest priority wins. If a configuration file is found in a higher priority location, the values from the configuration read from lower priority locations are overwritten.
@@ -42,9 +44,9 @@ The configuration is loaded in the following order:
 
 !!! note
     To find the locations where `pixi` looks for configuration files, run
-    `pixi` with `-v` or `--verbose`.
+    `pixi` with `-vv`.
 
-## Reference
+## Configuration options
 
 ??? info "Casing In Configuration"
     In versions of pixi `0.20.1` and older the global configuration used snake_case
@@ -66,7 +68,7 @@ The following reference describes all available configuration options.
 The default channels to select when running `pixi init` or `pixi global install`.
 This defaults to only conda-forge.
 ```toml title="config.toml"
-default-channels = ["conda-forge"]
+--8<-- "docs/source_files/pixi_config_tomls/main_config.toml:default-channels"
 ```
 !!! note
     The `default-channels` are only used when initializing a new project. Once initialized the `channels` are used from the project manifest.
@@ -78,7 +80,7 @@ This applies to the `pixi shell` subcommand.
 You can override this from the CLI with `--change-ps1`.
 
 ```toml title="config.toml"
-change-ps1 = true
+--8<-- "docs/source_files/pixi_config_tomls/main_config.toml:change-ps1"
 ```
 
 ### `tls-no-verify`
@@ -91,7 +93,7 @@ When set to true, the TLS certificates are not verified.
 You can override this from the CLI with `--tls-no-verify`.
 
 ```toml title="config.toml"
-tls-no-verify = false
+--8<-- "docs/source_files/pixi_config_tomls/main_config.toml:tls-no-verify"
 ```
 
 ### `authentication-override-file`
@@ -100,7 +102,7 @@ Usually, we try to use the keyring to load authentication data from, and only us
 file as a fallback. This option allows you to force the use of a JSON file.
 Read more in the authentication section.
 ```toml title="config.toml"
-authentication-override-file = "/path/to/your/override.json"
+--8<-- "docs/source_files/pixi_config_tomls/main_config.toml:authentication-override-file"
 ```
 
 ### `detached-environments`
@@ -123,20 +125,17 @@ This field can consist of two types of input.
 - A string value, which will be the absolute path to the directory where the environments will be stored.
 
 ```toml title="config.toml"
-detached-environments = true
+--8<-- "docs/source_files/pixi_config_tomls/main_config.toml:detached-environments"
 ```
 or:
 ```toml title="config.toml"
-detached-environments = "/opt/pixi/envs"
+--8<-- "docs/source_files/pixi_config_tomls/detached_environments_path_config.toml:detached-environments-path"
 ```
 
 The environments will be stored in the [cache directory](../features/environment.md#caching) when this option is `true`.
 When you specify a custom path the environments will be stored in that directory.
 
 The resulting directory structure will look like this:
-```toml title="config.toml"
-detached-environments = "/opt/pixi/envs"
-```
 ```shell
 /opt/pixi/envs
 ├── pixi-6837172896226367631
@@ -159,39 +158,25 @@ The default is `semver` but you can set the following:
 - `latest-up`: Pinning to the latest version, `1.2.3` -> `>=1.2.3`.
 
 ```toml title="config.toml"
-pinning-strategy = "no-pin"
+--8<-- "docs/source_files/pixi_config_tomls/main_config.toml:pinning-strategy"
 ```
 
 ### `mirrors`
 Configuration for conda channel-mirrors, more info [below](#mirror-configuration).
 
 ```toml title="config.toml"
-[mirrors]
-# redirect all requests for conda-forge to the prefix.dev mirror
-"https://conda.anaconda.org/conda-forge" = [
-    "https://prefix.dev/conda-forge"
-]
-
-# redirect all requests for bioconda to one of the three listed mirrors
-# Note: for repodata we try the first mirror first.
-"https://conda.anaconda.org/bioconda" = [
-    "https://conda.anaconda.org/bioconda",
-    # OCI registries are also supported
-    "oci://ghcr.io/channel-mirrors/bioconda",
-    "https://prefix.dev/bioconda",
-]
+--8<-- "docs/source_files/pixi_config_tomls/main_config.toml:mirrors"
 ```
 
 ### `repodata-config`
 Configuration for repodata fetching.
 ```toml title="config.toml"
-[repodata-config]
-# disable fetching of jlap, bz2 or zstd repodata files.
-# This should only be used for specific old versions of artifactory and other non-compliant
-# servers.
-disable-jlap = true  # don't try to download repodata.jlap
-disable-bzip2 = true # don't try to download repodata.json.bz2
-disable-zstd = true  # don't try to download repodata.json.zst
+--8<-- "docs/source_files/pixi_config_tomls/main_config.toml:repodata-config"
+```
+
+The above settings can be overridden on a per-channel basis by specifying a channel prefix in the configuration.
+```toml title="config.toml"
+--8<-- "docs/source_files/pixi_config_tomls/main_config.toml:prefix-repodata-config"
 ```
 
 ### `pypi-config`
@@ -200,20 +185,73 @@ To setup a certain number of defaults for the usage of PyPI registries. You can 
 - `index-url`: The default index URL to use for PyPI packages. This will be added to a manifest file on a `pixi init`.
 - `extra-index-urls`: A list of additional URLs to use for PyPI packages. This will be added to a manifest file on a `pixi init`.
 - `keyring-provider`: Allows the use of the [keyring](https://pypi.org/project/keyring/) python package to store and retrieve credentials.
+- `allow-insecure-host`: Allow insecure connections to host.
 
 ```toml title="config.toml"
-[pypi-config]
-# Main index url
-index-url = "https://pypi.org/simple"
-# list of additional urls
-extra-index-urls = ["https://pypi.org/simple2"]
-# can be "subprocess" or "disabled"
-keyring-provider = "subprocess"
+--8<-- "docs/source_files/pixi_config_tomls/main_config.toml:pypi-config"
 ```
 
 !!! Note "`index-url` and `extra-index-urls` are *not* globals"
     Unlike pip, these settings, with the exception of `keyring-provider` will only modify the `pixi.toml`/`pyproject.toml` file and are not globally interpreted when not present in the manifest.
     This is because we want to keep the manifest file as complete and reproducible as possible.
+
+### `concurrency`
+Configure multiple settings to limit or extend the concurrency of pixi.
+```toml title="config.toml"
+--8<-- "docs/source_files/pixi_config_tomls/main_config.toml:concurrency"
+```
+Set them through the CLI with:
+```shell
+pixi config set concurrency.solves 1
+pixi config set concurrency.downloads 12
+```
+
+## Experimental
+This allows the user to set specific experimental features that are not yet stable.
+
+Please write a GitHub issue and add the flag `experimental` to the issue if you find issues with the feature you activated.
+
+
+### Caching environment activations
+Turn this feature on from configuration with the following command:
+```shell
+# For all your projects
+pixi config set experimental.use-environment-activation-cache true --global
+
+# For a specific project
+pixi config set experimental.use-environment-activation-cache true --local
+```
+
+This will cache the environment activation in the `.pixi/activation-env-v0` folder in the project root.
+It will create a json file for each environment that is activated, and it will be used to activate the environment in the future.
+```bash
+> tree .pixi/activation-env-v0/
+.pixi/activation-env-v0/
+├── activation_default.json
+└── activation_lint.json
+
+> cat  .pixi/activation-env-v0/activation_lint.json
+{"hash":"8d8344e0751d377a","environment_variables":{<ENVIRONMENT_VARIABLES_USED_IN_ACTIVATION>}}
+```
+
+- The `hash` is a hash of the data on that environment in the `pixi.lock`, plus some important information on the environment activation.
+  Like `[activation.scripts]` and `[activation.env]` from the manifest file.
+- The `environment_variables` are the environment variables that are set when activating the environment.
+
+You can ignore the cache by running:
+```
+pixi run/shell/shell-hook --force-activate
+```
+
+Set the configuration with:
+```toml title="config.toml"
+--8<-- "docs/source_files/pixi_config_tomls/main_config.toml:experimental"
+```
+
+!!! note "Why is this experimental?"
+This feature is experimental because the cache invalidation is very tricky,
+and we don't want to disturb users that are not affected by activation times.
+
 
 ## Mirror configuration
 
@@ -232,10 +270,7 @@ important to get this file from a trusted source.
 You can also specify mirrors for an entire "host", e.g.
 
 ```toml title="config.toml"
-[mirrors]
-"https://conda.anaconda.org" = [
-    "https://prefix.dev/"
-]
+--8<-- "docs/source_files/pixi_config_tomls/mirror_prefix_config.toml:mirrors"
 ```
 
 This will forward all request to channels on anaconda.org to prefix.dev.
@@ -248,10 +283,7 @@ the Github container registry (ghcr.io) that is maintained by the conda-forge
 team. You can use it like this:
 
 ```toml title="config.toml"
-[mirrors]
-"https://conda.anaconda.org/conda-forge" = [
-    "oci://ghcr.io/channel-mirrors/conda-forge"
-]
+--8<-- "docs/source_files/pixi_config_tomls/oci_config.toml:oci-mirrors"
 ```
 
 The GHCR mirror also contains `bioconda` packages. You can search the [available

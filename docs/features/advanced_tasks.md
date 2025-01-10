@@ -125,7 +125,7 @@ To add a task to run the `bar.py` file, use:
 pixi task add bar "python bar.py" --cwd scripts
 ```
 
-This will add the following line to [manifest file](../reference/project_configuration.md):
+This will add the following line to [manifest file](../reference/pixi_manifest.md):
 
 ```toml title="pixi.toml"
 [tasks]
@@ -212,6 +212,8 @@ This setting can also be set from the command line with `pixi run --clean-env TA
     On Windows it's hard to create a "clean environment" as `conda-forge` doesn't ship Windows compilers and Windows needs a lot of base variables.
     Making this feature not worthy of implementing as the amount of edge cases will make it unusable.
 
+
+
 ## Our task runner: deno_task_shell
 
 To support the different OS's (Windows, OSX and Linux), pixi integrates a shell that can run on all of them.
@@ -260,7 +262,7 @@ Next to running actual executable like `./myprogram`, `cmake` or `python` the sh
   - `echo hello > file.txt` will put `hello` in `file.txt` and overwrite existing text.
   - `python main.py 2> file.txt` will put the `stderr` output in `file.txt`.
   - `python main.py &> file.txt` will put the `stderr` **and** `stdout` in `file.txt`.
-  - `echo hello > file.txt` will append `hello` to the existing `file.txt`.
+  - `echo hello >> file.txt` will append `hello` to the existing `file.txt`.
 - **Glob expansion:** `*` to expand all options.
   - `echo *.py` will echo all filenames that end with `.py`
   - `echo **/*.py` will echo all filenames that end with `.py` in this directory and all descendant directories.

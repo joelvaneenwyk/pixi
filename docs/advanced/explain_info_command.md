@@ -57,7 +57,7 @@ In that case, if pixi cannot find the `__cuda` virtual package on your machine t
 ### Cache dir
 
 The directory where pixi stores its cache.
-Checkout the [cache documentation](../features/environment.md#caching) for more information.
+Checkout the [cache documentation](../features/environment.md#caching-packages) for more information.
 
 ### Auth storage
 
@@ -72,11 +72,11 @@ The size of the previously mentioned "Cache dir" in Mebibytes.
 ## Project info
 
 Everything below `Project` is info about the project you're currently in.
-This info is only available if your path has a [manifest file](../reference/project_configuration.md).
+This info is only available if your path has a [manifest file](../reference/pixi_manifest.md).
 
 ### Manifest file
 
-The path to the [manifest file](../reference/project_configuration.md) that describes the project.
+The path to the [manifest file](../reference/pixi_manifest.md) that describes the project.
 
 ### Last updated
 

@@ -1,10 +1,14 @@
-use crate::environment::{get_up_to_date_prefix, LockFileUsage};
+use std::str::FromStr;
 
-use crate::{FeatureName, Project};
+use crate::lock_file::UpdateMode;
+use crate::{
+    environment::{get_update_lock_file_and_prefix, LockFileUsage},
+    Project, UpdateLockFileOptions,
+};
 use clap::Parser;
 use miette::IntoDiagnostic;
+use pixi_manifest::FeatureName;
 use rattler_conda_types::Platform;
-use std::str::FromStr;
 
 #[derive(Parser, Debug, Default)]
 pub struct Args {
@@ -12,7 +16,8 @@ pub struct Args {
     #[clap(required = true, num_args=1..)]
     pub platform: Vec<String>,
 
-    /// Don't update the environment, only remove the platform(s) from the lock-file.
+    /// Don't update the environment, only remove the platform(s) from the
+    /// lock-file.
     #[clap(long)]
     pub no_install: bool,
 
@@ -39,10 +44,14 @@ pub async fn execute(mut project: Project, args: Args) -> miette::Result<()> {
         .manifest
         .remove_platforms(platforms.clone(), &feature_name)?;
 
-    get_up_to_date_prefix(
+    get_update_lock_file_and_prefix(
         &project.default_environment(),
-        LockFileUsage::Update,
-        args.no_install,
+        UpdateMode::Revalidate,
+        UpdateLockFileOptions {
+            lock_file_usage: LockFileUsage::Update,
+            no_install: args.no_install,
+            max_concurrent_solves: project.config().max_concurrent_solves(),
+        },
     )
     .await?;
     project.save()?;
