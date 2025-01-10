@@ -9,3 +9,9 @@ __pycache__
 site/
 .cache
 pytest-temp
+
+# diff-jve: Ignore additional intermediate files
+/.git/
+.cspell/
+.mypy_cache/
+.venv/
