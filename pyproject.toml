@@ -24,4 +24,4 @@ dev = [
 ]
 
 [tool.uv.sources]
-opencv-stubs = { git = "https://github.com/joelvaneenwyk/opencv-stubs.git" }
+opencv-stubs = { git = "https://github.com/joelvaneenwyk/opencv-stubs" }
