@@ -1,3 +1,5 @@
+"""Webcam capture and face detection using OpenCV."""
+
 import os
 
 import cv2
@@ -28,10 +30,10 @@ def capture_and_grayscale() -> None:
     working_cam = None
     for index in range(8):
         cap = cv2.VideoCapture(index)
-        if not cap.read()[0]:
+        ret, frame = cap.read()
+        if not ret or cap.get(cv2.CAP_PROP_FRAME_WIDTH) < 700 or index == 1:
             print(f"Webcam {index} not found")
             cap.release()
-            continue
         else:
             print(f"Webcam {index} found")
             working_cam = cap
